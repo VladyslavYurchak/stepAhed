@@ -25,6 +25,7 @@ class Telegram
             throw new \RuntimeException('Telegram network error');
         }
         $body = $response->json();
+        if (str_starts_with($method, 'editMessage') && str_contains($body['description'] ?? '', 'message is not modified')) return true;
         if (!$response->successful() || !($body['ok'] ?? false)) {
             throw new \RuntimeException('Telegram API error '.($body['error_code'] ?? $response->status()));
         }
@@ -46,6 +47,16 @@ class Telegram
             fn ($row) => array_map(fn ($b) => ['text' => $b[0], 'callback_data' => $b[1]], $row), $rows
         )];
         $this->enqueue('sendMessage', $payload);
+    }
+
+    public function edit(int|string $chat, int $messageId, string $text, array $rows = []): void
+    {
+        $this->enqueue('editMessageText', [
+            'chat_id' => $chat, 'message_id' => $messageId, 'text' => $text,
+            'reply_markup' => ['inline_keyboard' => array_map(
+                fn ($row) => array_map(fn ($b) => ['text' => $b[0], 'callback_data' => $b[1]], $row), $rows
+            )],
+        ]);
     }
 
     public function flush(): void

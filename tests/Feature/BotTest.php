@@ -158,4 +158,83 @@ class BotTest extends TestCase
         $this->assertSame($token,Crypt::decryptString(DB::table('bot_settings')->where('key','token')->value('value')));
         $this->get('/setup/test-key')->assertNotFound();
     }
+
+    private function draft(array $values = []): void
+    {
+        DB::table('bot_profiles')->where('id',11)->update(['dialog'=>json_encode(array_merge([
+            'step'=>'weekdays','title'=>'Читати 10 сторінок','mandatory'=>true,'photo'=>false,
+            'mode'=>'weekly','weekdays'=>[],
+        ],$values), JSON_UNESCAPED_UNICODE)]);
+    }
+
+    private function text(string $value,int $id): void
+    {
+        app(Bot::class)->update(['update_id'=>$id,'message'=>['message_id'=>$id,'from'=>['id'=>11,'first_name'=>'Тест'],'chat'=>['id'=>11,'type'=>'private'],'text'=>$value]]);
+    }
+
+    public function test_weekday_toggle_edits_same_message_without_sending_another(): void
+    {
+        $this->draft();
+        $this->button('day:1',101);
+        $this->button('day:5',102);
+        $this->button('day:1',103);
+        $this->assertSame(0,DB::table('bot_outbox')->where('method','sendMessage')->count());
+        $edits=DB::table('bot_outbox')->where('method','editMessageText')->get();
+        $this->assertCount(3,$edits);
+        $last=json_decode($edits->last()->payload,true);
+        $this->assertSame(1,$last['message_id']);
+        $this->assertSame('Пн',$last['reply_markup']['inline_keyboard'][0][0]['text']);
+        $this->assertSame('✓ Пт',$last['reply_markup']['inline_keyboard'][1][0]['text']);
+        $s=json_decode(DB::table('bot_profiles')->where('id',11)->value('dialog'),true);
+        $this->assertSame([5],$s['weekdays']);
+    }
+
+    public function test_old_picker_cannot_modify_current_selection(): void
+    {
+        $this->draft(['weekdays'=>[1],'picker_message_id'=>99]);
+        $this->button('day:5',101);
+        $s=json_decode(DB::table('bot_profiles')->where('id',11)->value('dialog'),true);
+        $this->assertSame([1],$s['weekdays']);
+        $this->assertSame(0,DB::table('bot_outbox')->where('method','editMessageText')->count());
+    }
+
+    public function test_per_day_times_are_saved_and_shown_before_confirmation(): void
+    {
+        $this->draft(['weekdays'=>[1,5]]);
+        $this->button('daysdone',101);
+        $this->button('timechoice:separate',102);
+        $this->text('08:00',103);
+        $this->text('20:00',104);
+        $s=json_decode(DB::table('bot_profiles')->where('id',11)->value('dialog'),true);
+        $this->assertSame('confirm',$s['step']);
+        $this->assertSame(['1'=>'08:00','5'=>'20:00'],$s['day_times']);
+        $preview=json_decode(DB::table('bot_outbox')->where('method','sendMessage')->orderByDesc('id')->first()->payload,true);
+        $this->assertStringContainsString('Пн 08:00 · Пт 20:00',$preview['text']);
+        $this->button('save',105);
+        $schedule=json_decode(DB::table('commitments')->first()->schedule,true);
+        $this->assertSame($s['day_times'],$schedule['day_times']);
+        $task=DB::table('commitments')->first();
+        $this->assertDatabaseHas('occurrences',['commitment_id'=>$task->id,'due_at'=>'2026-10-30 18:00:00']);
+        $this->assertDatabaseHas('occurrences',['commitment_id'=>$task->id,'due_at'=>'2026-11-02 06:00:00']);
+    }
+
+    public function test_invalid_day_time_does_not_advance_to_next_day(): void
+    {
+        $this->draft(['weekdays'=>[1,5]]);
+        $this->button('daysdone',101); $this->button('timechoice:separate',102);
+        $this->text('25:90',103);
+        $s=json_decode(DB::table('bot_profiles')->where('id',11)->value('dialog'),true);
+        $this->assertSame(0,$s['time_index']);
+        $this->assertSame([],$s['day_times']);
+    }
+
+    public function test_shared_time_and_existing_weekly_schedules_still_work(): void
+    {
+        $this->draft(['weekdays'=>[1,5]]);
+        $this->button('daysdone',101); $this->button('timechoice:common',102); $this->text('19:00',103); $this->button('save',104);
+        $task=DB::table('commitments')->first(); $schedule=json_decode($task->schedule,true);
+        $this->assertSame('19:00',$schedule['time']);
+        $this->assertArrayNotHasKey('day_times',$schedule);
+        $this->assertDatabaseHas('occurrences',['commitment_id'=>$task->id,'due_at'=>'2026-10-30 17:00:00']);
+    }
 }

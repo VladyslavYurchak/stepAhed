@@ -17,7 +17,8 @@ class Tasks
             $date = $start->addDays($i);
             if ($s['mode'] === 'once' && $date->toDateString() !== $s['date']) continue;
             if ($s['mode'] === 'weekly' && !in_array($date->dayOfWeekIso, $s['weekdays'], true)) continue;
-            $due = $date->setTimeFromTimeString($s['time'])->utc();
+            $time = $s['mode'] === 'weekly' ? ($s['day_times'][$date->dayOfWeekIso] ?? $s['time']) : $s['time'];
+            $due = $date->setTimeFromTimeString($time)->utc();
             if ($due->lessThanOrEqualTo(Time::now())) continue;
             DB::table('occurrences')->insertOrIgnore([
                 'commitment_id' => $task->id, 'profile_id' => $task->profile_id,

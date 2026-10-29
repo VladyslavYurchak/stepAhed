@@ -29,7 +29,7 @@ class Bot
             $p = DB::table('bot_profiles')->where('id', $uid)->lockForUpdate()->first();
             if ($cb) {
                 $this->tg->enqueue('answerCallbackQuery', ['callback_query_id' => $cb['id']]);
-                $this->button($p, (string) ($cb['data'] ?? ''));
+                $this->button($p, (string) ($cb['data'] ?? ''), (int) $m['message_id']);
             } else {
                 $this->message($p, $m);
             }
@@ -89,6 +89,23 @@ class Bot
             $s['time'] = $text; $s['step'] = 'confirm'; $this->state($p->id, $s);
             $this->preview($p, $s); return;
         }
+        if (($s['step'] ?? '') === 'daytime') {
+            $index = $s['time_index'];
+            $day = $s['weekdays'][$index];
+            if (!preg_match('/^(?:[01]\d|2[0-3]):[0-5]\d$/', $text)) {
+                $this->askDayTime($p->id, $day); return;
+            }
+            $s['day_times'][$day] = $text;
+            $s['time_index']++;
+            if ($s['time_index'] < count($s['weekdays'])) {
+                $this->state($p->id, $s);
+                $this->askDayTime($p->id, $s['weekdays'][$s['time_index']]);
+            } else {
+                $s['time'] = $s['day_times'][$s['weekdays'][0]];
+                $s['step'] = 'confirm'; $this->state($p->id, $s); $this->preview($p, $s);
+            }
+            return;
+        }
         if (($s['step'] ?? '') === 'move') {
             $o = $this->tasks->occurrence($s['id'], $p->id);
             $date = $this->parseDate($text, $p->timezone, true);
@@ -113,21 +130,34 @@ class Bot
 
     private function askTime(int $uid): void { $this->tg->send($uid, 'До котрої години виконати? Введи час у форматі 21:00.'); }
 
+    private function askDayTime(int $uid, int $day): void
+    {
+        $name = [1=>'Понеділок',2=>'Вівторок',3=>'Середа',4=>'Четвер',5=>'П’ятниця',6=>'Субота',7=>'Неділя'][$day];
+        $this->tg->send($uid, "{$name} — до котрої години виконати? Введи час, наприклад 21:00.");
+    }
+
+    private function weeklySummary(array $s): string
+    {
+        $names = [1=>'Пн',2=>'Вт',3=>'Ср',4=>'Чт',5=>'Пт',6=>'Сб',7=>'Нд'];
+        return implode(' · ', array_map(fn ($d) => $names[$d].' '.$s['day_times'][$d], $s['weekdays']));
+    }
+
     private function preview(object $p, array $s): void
     {
         $schedule = match ($s['mode']) {
             'once' => $s['date'], 'daily' => 'Щодня, без кінцевої дати',
             default => 'Дні тижня: '.implode(', ', array_map(fn ($d) => ['1'=>'Пн','2'=>'Вт','3'=>'Ср','4'=>'Чт','5'=>'Пт','6'=>'Сб','7'=>'Нд'][$d], $s['weekdays'])).', без кінцевої дати',
         };
+        $schedule = !empty($s['day_times']) ? $this->weeklySummary($s).', без кінцевої дати' : $schedule.' · до '.$s['time'];
         $amount = config('bot.base_penalty') + $p->violations;
-        $text = ($s['mandatory'] ? '🔒 ' : '🌿 ').$s['title']."\n{$schedule} · до {$s['time']}\nЧасовий пояс: {$p->timezone}\n".
+        $text = ($s['mandatory'] ? '🔒 ' : '🌿 ').$s['title']."\n{$schedule}\nЧасовий пояс: {$p->timezone}\n".
             ($s['photo'] ? '📷 Фото обов’язкове. Невідповідне фото — відмова та штраф для зобов’язань.' : 'Підтвердження кнопкою.').
             ($s['mandatory'] ? "\nШтраф за найближче порушення: {$amount} грн, далі +1 грн. Пілот: без оплати.\nЗміни без штрафу — раніше ніж за 3 години до дедлайну." : '\nБез штрафу.');
         if ($s['mode'] === 'once' && $s['mandatory'] && Time::parse($s['date'].' '.$s['time'], $p->timezone)->lessThanOrEqualTo(Time::now()->addHours(3))) $text .= "\n⚠️ До дедлайну не більше 3 годин. Після підтвердження безкоштовне скасування недоступне.";
         $this->tg->send($p->id, $text, [[['Підтвердити', 'save']], [['Почати заново', 'new'], ['Вийти', 'home']]]);
     }
 
-    private function button(object $p, string $data): void
+    private function button(object $p, string $data, int $messageId): void
     {
         [$action, $value] = array_pad(explode(':', $data, 2), 2, '');
         $s = json_decode($p->dialog ?? 'null', true);
@@ -156,17 +186,36 @@ class Bot
             return;
         }
         if ($action === 'day' && ($s['step'] ?? '') === 'weekdays') {
+            if (isset($s['picker_message_id']) && $s['picker_message_id'] !== $messageId) return;
+            $s['picker_message_id'] = $messageId;
             $d = (int) $value; if ($d < 1 || $d > 7) return;
             $s['weekdays'] = in_array($d, $s['weekdays'], true) ? array_values(array_diff($s['weekdays'], [$d])) : [...$s['weekdays'], $d];
-            sort($s['weekdays']); $this->state($p->id, $s); $this->weekdays($p->id, $s); return;
+            sort($s['weekdays']); $this->state($p->id, $s); $this->weekdays($p->id, $s, $messageId); return;
         }
         if ($action === 'daysdone' && ($s['step'] ?? '') === 'weekdays') {
-            if (!$s['weekdays']) { $this->tg->send($p->id, 'Обери хоча б один день.'); return; }
-            $s['step'] = 'time'; $this->state($p->id, $s); $this->askTime($p->id); return;
+            if (isset($s['picker_message_id']) && $s['picker_message_id'] !== $messageId) return;
+            if (!$s['weekdays']) { $this->weekdays($p->id, $s, $messageId, 'Обери хоча б один день тижня.'); return; }
+            $s['step'] = 'timechoice'; $s['picker_message_id'] = $messageId; $this->state($p->id, $s);
+            $this->tg->edit($p->id, $messageId, 'Дні обрано. Як налаштувати час?', [
+                [['Однаковий час для всіх днів', 'timechoice:common']],
+                [['Окремий час для кожного дня', 'timechoice:separate']],
+            ]); return;
+        }
+        if ($action === 'timechoice' && ($s['step'] ?? '') === 'timechoice') {
+            if ($s['picker_message_id'] !== $messageId || !in_array($value, ['common', 'separate'], true)) return;
+            if ($value === 'common') {
+                $s['step'] = 'time'; unset($s['day_times']);
+                $this->state($p->id, $s); $this->askTime($p->id);
+            } else {
+                $s['step'] = 'daytime'; $s['day_times'] = []; $s['time_index'] = 0;
+                $this->state($p->id, $s); $this->askDayTime($p->id, $s['weekdays'][0]);
+            }
+            $this->tg->edit($p->id, $messageId, 'Дні обрано. '.($value === 'common' ? 'Однаковий час для всіх днів.' : 'Окремий час для кожного дня.'));
+            return;
         }
         if ($action === 'save' && ($s['step'] ?? '') === 'confirm') {
             if ($s['mode'] === 'once' && Time::parse($s['date'].' '.$s['time'], $p->timezone)->lessThanOrEqualTo(Time::now())) { $this->state($p->id, null); $this->tg->send($p->id, 'Час задачі минув під час налаштування. Створи її з новим дедлайном.'); return; }
-            $schedule = array_intersect_key($s, array_flip(['mode','date','time','weekdays']));
+            $schedule = array_intersect_key($s, array_flip(['mode','date','time','weekdays','day_times']));
             $schedule['timezone'] = $p->timezone;
             $id = DB::table('commitments')->insertGetId(['profile_id'=>$p->id,'title'=>$s['title'],'mandatory'=>$s['mandatory'],'photo_required'=>$s['photo'],'schedule'=>json_encode($schedule),'created_at'=>now(),'updated_at'=>now()]);
             $task = DB::table('commitments')->find($id);
@@ -219,10 +268,12 @@ class Bot
         $this->tg->send($p->id,'Ця кнопка вже неактуальна. Відкрий задачу з меню.');
     }
 
-    private function weekdays(int $uid, array $s): void
+    private function weekdays(int $uid, array $s, ?int $messageId = null, string $text = 'Обери дні тижня. Можна кілька.'): void
     {
         $buttons=[]; foreach ([1=>'Пн',2=>'Вт',3=>'Ср',4=>'Чт',5=>'Пт',6=>'Сб',7=>'Нд'] as $d=>$name) $buttons[]=[(in_array($d,$s['weekdays'],true)?'✓ ':'').$name,'day:'.$d];
-        $this->tg->send($uid,'Обери дні тижня. Можна кілька.',[...array_chunk($buttons,4),[['Далі','daysdone']]]);
+        $rows = [...array_chunk($buttons,4),[['Далі','daysdone']]];
+        if ($messageId) $this->tg->edit($uid, $messageId, $text, $rows);
+        else $this->tg->send($uid, $text, $rows);
     }
 
     private function listing(object $p, string $range): void
@@ -263,7 +314,8 @@ class Bot
         $count=0;
         foreach (DB::table('commitments')->where('profile_id',$p->id)->where('active',true)->get() as $task) {
             $s=json_decode($task->schedule,true); if ($s['mode']==='once') continue; $count++;
-            $this->tg->send($p->id,"{$task->title}\nРегулярно до {$s['time']}. Припинення прибере лише майбутні заняття, які ще можна скасувати без штрафу.",[[['Припинити повторення','stopseries:'.$task->id]]]);
+            $timing = !empty($s['day_times']) ? $this->weeklySummary($s) : 'Регулярно до '.$s['time'];
+            $this->tg->send($p->id,"{$task->title}\n{$timing}. Припинення прибере лише майбутні заняття, які ще можна скасувати без штрафу.",[[['Припинити повторення','stopseries:'.$task->id]]]);
         }
         if (!$count) $this->tg->send($p->id,'Регулярних занять поки немає.');
     }
