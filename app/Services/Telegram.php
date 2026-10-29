@@ -40,9 +40,10 @@ class Telegram
         ]);
     }
 
-    public function send(int|string $chat, string $text, array $rows = []): void
+    public function send(int|string $chat, string $text, array $rows = [], ?string $parseMode = null): void
     {
         $payload = ['chat_id' => $chat, 'text' => $text];
+        if ($parseMode !== null) $payload['parse_mode'] = $parseMode;
         if ($rows) $payload['reply_markup'] = ['inline_keyboard' => array_map(
             fn ($row) => array_map(fn ($b) => ['text' => $b[0], 'callback_data' => $b[1]], $row), $rows
         )];
