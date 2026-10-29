@@ -44,11 +44,14 @@ class Bot
 
     private function home(int $uid): void
     {
-        $this->tg->send($uid, "Крок вперед 👣\nЩо плануємо?\nПілотна версія: штрафи обліковуються, оплачувати їх поки не потрібно.", [
+        $buttons = [
             [['＋ Додати задачу', 'new']], [['Сьогодні', 'list:today'], ['Мій тиждень', 'list:week']],
             [['Регулярні заняття', 'series'], ['Прогрес', 'progress']], [['Налаштування', 'settings']],
             [['Екстрена пауза', 'pause']],
-        ]);
+            [['Благодійні збори', 'funds']],
+        ];
+        if (app(Funds::class)->isAdmin($uid)) $buttons[] = [['⚙️ Адміністрування', 'a:menu']];
+        $this->tg->send($uid, "Крок вперед 👣\nЩо плануємо?\nПілотна версія: штрафи обліковуються. Донати на схвалені збори добровільні; доступ до бота не блокується.", $buttons);
     }
 
     private function message(object $p, array $m): void
@@ -79,6 +82,7 @@ class Bot
             $this->state($p->id, null); $this->home($p->id); return;
         }
         if (!$p->onboarded) { $this->tg->send($p->id, 'Спочатку відкрий /start і підтвердь часовий пояс.'); return; }
+        if (app(Funds::class)->message($p,$m)) return;
         if (in_array($s['step'] ?? '', ['edit_single_title','edit_series_title'], true)) {
             if (mb_strlen($text) < 3 || mb_strlen($text) > 180) { $this->tg->send($p->id,'Введи нову дію та обсяг: від 3 до 180 символів.'); return; }
             $s['title'] = $text;
@@ -198,6 +202,7 @@ class Bot
             $this->tg->edit($p->id,$messageId,'✅ Час налаштовано: '.$city[0]."\nЗараз там ".Time::now($city[1])->format('H:i').".\nНові задачі створюватимуться за цим часом. Уже погоджені дедлайни збережуться.",[[['Відкрити меню','home']],[['Обрати інше місто','timezone']]]); return;
         }
         if (!$p->onboarded) { $this->tg->send($p->id, 'Спочатку підтвердь часовий пояс через /start.'); return; }
+        if (app(Funds::class)->button($p->id,$data,$p->id,$messageId)) return;
         if ($action === 'home') { $this->state($p->id, null); $this->home($p->id); return; }
         if ($action === 'new') { $this->state($p->id, ['step' => 'title']); $this->tg->send($p->id, 'Що хочеш зробити? Напиши конкретну дію та обсяг, наприклад «30 віджимань». Для виходу — /cancel.'); return; }
         if ($action === 'pause') { $this->pauseMenu($p); return; }
@@ -309,7 +314,7 @@ class Bot
             $rows = DB::table('occurrences')->where('profile_id',$p->id)->selectRaw('status, count(*) as total')->groupBy('status')->pluck('total','status');
             $this->tg->send($p->id, 'Виконано: '.($rows['done'] ?? 0)."\nНа перевірці: ".($rows['review'] ?? 0)."\nПропущено: ".($rows['missed'] ?? 0)."\nДо скидання штрафу: {$p->success_streak}/10 успішних днів. Рахуються завершені дні зі зобов’язаннями; дні пауз і без задач пропускаються.\nНаступний розрахований штраф: ".(20+$p->violations).' грн. Пілот: без оплати.'); return;
         }
-        if ($action === 'settings') { $this->tg->send($p->id,"Часовий пояс: {$p->timezone}\nНагадування: за 2 години до дедлайну.\nЕкстрена пауза: до 3 діб раз на 30 днів; далі через модерацію.\nКалендар та донати ще не підключені.", [[['Часовий пояс','timezone']],[['Екстрена пауза','pause']]]); return; }
+        if ($action === 'settings') { $this->tg->send($p->id,"Часовий пояс: {$p->timezone}\nНагадування: за 2 години до дедлайну.\nЕкстрена пауза: до 3 діб раз на 30 днів; далі через модерацію.\nДобровільні донати — на схвалені збори. Календар ще не підключений.", [[['Часовий пояс','timezone']],[['Екстрена пауза','pause']],[['Благодійні збори','funds']]]); return; }
         $o = $this->tasks->occurrence((int) $value, $p->id);
         if (!$o) { $this->tg->send($p->id, 'Ця дія вже неактуальна. Відкрий /menu.'); return; }
         if ($action === 'view') { $this->card($p, $o); return; }
@@ -418,6 +423,11 @@ class Bot
         $task=DB::table('commitments')->find($o->commitment_id);
         if ($task && $task->active && json_decode($task->schedule,true)['mode']!=='once') $buttons[]=[['Редагувати регулярний розклад','seriesedit:'.$task->id]];
         if ($o->status==='missed') $buttons[]=[['Оскаржити','appeal:'.$o->id]];
+        if ($o->status==='missed' && $o->penalty_amount>0) {
+            $donation=DB::table('donations')->where('occurrence_id',$o->id)->first();
+            $label=match ($donation->status ?? '') { 'pending'=>'Квитанція на перевірці','approved'=>'✅ Донат підтверджений',default=>'Обрати збір / підтвердити донат' };
+            $buttons[]=[[$label,'donate:'.$o->id]];
+        }
         if ($back) $buttons[] = [['← До списку', $back]];
         $text = ($o->mandatory?'🔒 ':'🌿 ').$o->title."\nДо ".Time::parse($o->due_at,'UTC')->setTimezone($p->timezone)->format('d.m H:i')."\n{$status}".($o->photo_required?"\n📷 Потрібне фото":'').($o->penalty_amount?"\nРозрахований штраф: {$o->penalty_amount} грн (без оплати в пілоті)":'');
         if ($messageId) $this->tg->edit($p->id, $messageId, $text, $buttons);
@@ -491,6 +501,7 @@ class Bot
         }
         if (!$cb) return;
         $this->tg->enqueue('answerCallbackQuery',['callback_query_id'=>$cb['id']]);
+        if (str_starts_with($cb['data'] ?? '', 'a:')) { app(Funds::class)->button($uid,$cb['data'],(int)$chat,(int)$m['message_id']); return; }
         if ($chat!==$this->tg->setting('moderation_chat') || (string)$uid!==$this->tg->setting('admin_id')) return;
         [$action,$id]=array_pad(explode(':',$cb['data'] ?? '',2),2,'');
         if (in_array($action,['pauseapprove','pausereject'],true)) {
