@@ -283,4 +283,42 @@ class BotTest extends TestCase
         $this->assertStringContainsString('Поки задач немає.',$payload['text']);
         $this->assertSame(0,DB::table('bot_outbox')->where('method','sendMessage')->count());
     }
+
+    public function test_single_edit_dialog_saves_only_after_confirmation(): void
+    {
+        $o=$this->makeOccurrence();
+        $this->button('editsingle:'.$o->id,301);
+        $this->text('15 віджимань',302);
+        $this->assertDatabaseHas('occurrences',['id'=>$o->id,'status'=>'pending']);
+        $this->button('editsave:'.$o->id,303);
+        $this->assertDatabaseHas('occurrences',['id'=>$o->id,'status'=>'superseded']);
+        $this->assertDatabaseHas('commitments',['profile_id'=>11,'title'=>'15 віджимань']);
+        $this->button('editsave:'.$o->id,304);
+        $this->assertSame(1,DB::table('commitments')->where('title','15 віджимань')->count());
+    }
+
+    public function test_series_schedule_editor_uses_existing_day_picker_and_per_day_times(): void
+    {
+        $o=$this->makeOccurrence();
+        $this->button('seriesschedule:'.$o->commitment_id,301);
+        $this->button('schedule:weekly',302); $this->button('day:1',303); $this->button('day:5',304);
+        $this->button('daysdone',305); $this->button('timechoice:separate',306);
+        $this->text('09:00',307); $this->text('18:00',308);
+        $this->button('save',309);
+        $this->assertDatabaseHas('commitments',['id'=>$o->commitment_id,'active'=>false]);
+        $new=DB::table('commitments')->where('active',true)->first();
+        $schedule=json_decode($new->schedule,true);
+        $this->assertSame([1,5],$schedule['weekdays']);
+        $this->assertSame(['1'=>'09:00','5'=>'18:00'],$schedule['day_times']);
+    }
+
+    public function test_emergency_pause_dialog_requires_reason_and_confirmation(): void
+    {
+        $this->button('pausedays:2',301); $this->text('Хвороба',302);
+        $this->assertDatabaseCount('bot_pauses',0);
+        $this->button('pauseconfirm',303);
+        $this->assertDatabaseHas('bot_pauses',['profile_id'=>11,'status'=>'approved','automatic'=>true,'reason'=>'Хвороба']);
+        $this->button('pauseconfirm',304);
+        $this->assertDatabaseCount('bot_pauses',1);
+    }
 }

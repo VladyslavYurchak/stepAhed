@@ -46,6 +46,7 @@ class Bot
         $this->tg->send($uid, "Крок вперед 👣\nЩо плануємо?\nПілотна версія: штрафи обліковуються, оплачувати їх поки не потрібно.", [
             [['＋ Додати задачу', 'new']], [['Сьогодні', 'list:today'], ['Мій тиждень', 'list:week']],
             [['Регулярні заняття', 'series'], ['Прогрес', 'progress']], [['Налаштування', 'settings']],
+            [['Екстрена пауза', 'pause']],
         ]);
     }
 
@@ -70,6 +71,20 @@ class Bot
             $this->state($p->id, null); $this->home($p->id); return;
         }
         if (!$p->onboarded) { $this->tg->send($p->id, 'Спочатку відкрий /start і підтвердь часовий пояс.'); return; }
+        if (in_array($s['step'] ?? '', ['edit_single_title','edit_series_title'], true)) {
+            if (mb_strlen($text) < 3 || mb_strlen($text) > 180) { $this->tg->send($p->id,'Введи нову дію та обсяг: від 3 до 180 символів.'); return; }
+            $s['title'] = $text;
+            if ($s['step'] === 'edit_single_title') {
+                $s['step'] = 'edit_single_confirm'; $this->state($p->id,$s);
+                $this->tg->send($p->id,"Нова умова: {$text}\nЗміниться лише це заняття. Дедлайн та вимога фото залишаються. Правило трьох годин перевіримо ще раз при збереженні.",[[['Зберегти зміни','editsave:'.$s['id']],['Вийти','home']]]);
+            } else { $s['step']='confirm'; $this->state($p->id,$s); $this->preview($p,$s); }
+            return;
+        }
+        if (($s['step'] ?? '') === 'pause_reason') {
+            if (mb_strlen($text)<3 || mb_strlen($text)>300) { $this->tg->send($p->id,'Коротко опиши причину: від 3 до 300 символів. Довідки та медичні фото не потрібні.'); return; }
+            $s['reason']=$text; $s['step']='pause_confirm'; $this->state($p->id,$s);
+            $this->tg->send($p->id,"Екстрена пауза: {$s['days']} діб.\nПричина: {$text}\nПерша пауза за 30 днів — без погодження. Повторна або продовження — через модератора. Попередні пропуски не скасовуються.",[[['Підтвердити паузу','pauseconfirm'],['Вийти','home']]]); return;
+        }
         if (($s['step'] ?? '') === 'photo') { $this->photo($p, $m, $s); return; }
         if (($s['step'] ?? '') === 'title') {
             if (mb_strlen($text) < 3 || mb_strlen($text) > 180) { $this->tg->send($p->id, 'Опиши задачу текстом від 3 до 180 символів. Голосові додамо пізніше.'); return; }
@@ -144,16 +159,18 @@ class Bot
 
     private function preview(object $p, array $s): void
     {
+        $displayTimezone = $s['timezone'] ?? $p->timezone;
         $schedule = match ($s['mode']) {
             'once' => $s['date'], 'daily' => 'Щодня, без кінцевої дати',
             default => 'Дні тижня: '.implode(', ', array_map(fn ($d) => ['1'=>'Пн','2'=>'Вт','3'=>'Ср','4'=>'Чт','5'=>'Пт','6'=>'Сб','7'=>'Нд'][$d], $s['weekdays'])).', без кінцевої дати',
         };
         $schedule = !empty($s['day_times']) ? $this->weeklySummary($s).', без кінцевої дати' : $schedule.' · до '.$s['time'];
         $amount = config('bot.base_penalty') + $p->violations;
-        $text = ($s['mandatory'] ? '🔒 ' : '🌿 ').$s['title']."\n{$schedule}\nЧасовий пояс: {$p->timezone}\n".
+        $text = ($s['mandatory'] ? '🔒 ' : '🌿 ').$s['title']."\n{$schedule}\nЧасовий пояс: {$displayTimezone}\n".
             ($s['photo'] ? '📷 Фото обов’язкове. Невідповідне фото — відмова та штраф для зобов’язань.' : 'Підтвердження кнопкою.').
-            ($s['mandatory'] ? "\nШтраф за найближче порушення: {$amount} грн, далі +1 грн. Пілот: без оплати.\nЗміни без штрафу — раніше ніж за 3 години до дедлайну." : '\nБез штрафу.');
+            ($s['mandatory'] ? "\nШтраф за найближче порушення: {$amount} грн, далі +1 грн. Пілот: без оплати.\nЗміни без штрафу — раніше ніж за 3 години до дедлайну." : "\nБез штрафу.");
         if ($s['mode'] === 'once' && $s['mandatory'] && Time::parse($s['date'].' '.$s['time'], $p->timezone)->lessThanOrEqualTo(Time::now()->addHours(3))) $text .= "\n⚠️ До дедлайну не більше 3 годин. Після підтвердження безкоштовне скасування недоступне.";
+        if (isset($s['editing_series_id'])) $text .= "\nЗміняться майбутні заняття, до яких більше 3 годин. Найближчі та вже виконані заняття збережуть початкові умови.";
         $this->tg->send($p->id, $text, [[['Підтвердити', 'save']], [['Почати заново', 'new'], ['Вийти', 'home']]]);
     }
 
@@ -166,6 +183,39 @@ class Bot
         if (!$p->onboarded) { $this->tg->send($p->id, 'Спочатку підтвердь часовий пояс через /start.'); return; }
         if ($action === 'home') { $this->state($p->id, null); $this->home($p->id); return; }
         if ($action === 'new') { $this->state($p->id, ['step' => 'title']); $this->tg->send($p->id, 'Що хочеш зробити? Напиши конкретну дію та обсяг, наприклад «30 віджимань». Для виходу — /cancel.'); return; }
+        if ($action === 'pause') { $this->pauseMenu($p); return; }
+        if ($action === 'pausedays') {
+            $days=(int)$value; if ($days<1 || $days>3) return;
+            $this->state($p->id,['step'=>'pause_reason','days'=>$days]);
+            $this->tg->send($p->id,'Коротко напиши причину паузи. Без медичних документів або фото.'); return;
+        }
+        if ($action === 'pauseconfirm' && ($s['step'] ?? '') === 'pause_confirm') {
+            try { app(Accountability::class)->requestPause($p->id,$s['days'],$s['reason']); }
+            catch (\RuntimeException) { $this->tg->send($p->id,'Для погодження повторної паузи спочатку потрібно підключити групу модерації.'); }
+            $this->state($p->id,null); return;
+        }
+        if ($action === 'pauseresume') { app(Accountability::class)->resume($p->id); $this->home($p->id); return; }
+        if ($action === 'pausewithdraw') { app(Accountability::class)->withdrawPause($p->id); return; }
+        if ($action === 'seriesedit' || $action === 'seriesname' || $action === 'seriesschedule') {
+            $task=DB::table('commitments')->where('id',(int)$value)->where('profile_id',$p->id)->where('active',true)->first();
+            if (!$task || json_decode($task->schedule,true)['mode']==='once') { $this->tg->send($p->id,'Цей регулярний розклад уже неактивний.'); return; }
+            if ($action==='seriesedit') {
+                $this->tg->edit($p->id,$messageId,"Редагування: {$task->title}\nЗміни стосуватимуться майбутніх занять. Якщо до найближчого не більше 3 годин — його умови збережуться.",[
+                    [['Назва / обсяг','seriesname:'.$task->id]],[['Дні та години','seriesschedule:'.$task->id]],[['Меню','home']],
+                ]); return;
+            }
+            $draft=json_decode($task->schedule,true);
+            $draft['title']=$task->title; $draft['mandatory']=(bool)$task->mandatory; $draft['photo']=(bool)$task->photo_required;
+            $draft['editing_series_id']=$task->id; $draft['editing_expected']=hash('sha256',$task->title.$task->schedule);
+            if ($action==='seriesname') {
+                $draft['step']='edit_series_title'; $this->state($p->id,$draft);
+                $this->tg->send($p->id,'Напиши нову назву та обсяг для майбутніх занять. Зараз: '.$task->title);
+            } else {
+                $draft['step']='schedule'; unset($draft['day_times'],$draft['picker_message_id']); $this->state($p->id,$draft);
+                $this->tg->edit($p->id,$messageId,'Обери новий регулярний розклад.',[[['Щодня','schedule:daily']],[['Обрати дні тижня','schedule:weekly']]]);
+            }
+            return;
+        }
         if ($action === 'kind' && ($s['step'] ?? '') === 'kind') {
             $s['mandatory'] = $value === '1'; $s['step'] = 'photo'; $this->state($p->id, $s);
             $this->tg->send($p->id, 'Вимагати фото? Обирай це лише для результату, який можна побачити на фото. Фото перевірятиме адміністратор.', [[['📷 Так', 'photo:1'], ['Без фото', 'photo:0']]]); return;
@@ -216,10 +266,16 @@ class Bot
         if ($action === 'save' && ($s['step'] ?? '') === 'confirm') {
             if ($s['mode'] === 'once' && Time::parse($s['date'].' '.$s['time'], $p->timezone)->lessThanOrEqualTo(Time::now())) { $this->state($p->id, null); $this->tg->send($p->id, 'Час задачі минув під час налаштування. Створи її з новим дедлайном.'); return; }
             $schedule = array_intersect_key($s, array_flip(['mode','date','time','weekdays','day_times']));
-            $schedule['timezone'] = $p->timezone;
-            $id = DB::table('commitments')->insertGetId(['profile_id'=>$p->id,'title'=>$s['title'],'mandatory'=>$s['mandatory'],'photo_required'=>$s['photo'],'schedule'=>json_encode($schedule),'created_at'=>now(),'updated_at'=>now()]);
-            $task = DB::table('commitments')->find($id);
-            $this->tasks->generate($task, $s['mode'] === 'once' ? 367 : 14);
+            $schedule['timezone'] = $s['timezone'] ?? $p->timezone;
+            if (isset($s['editing_series_id'])) {
+                try { $this->tasks->reviseSeries($p->id,$s['editing_series_id'],$s['editing_expected'],$s['title'],$schedule); }
+                catch (\DomainException $e) { $this->state($p->id,null); $this->tg->send($p->id,$e->getMessage()); return; }
+            } else {
+                $id = DB::table('commitments')->insertGetId(['profile_id'=>$p->id,'title'=>$s['title'],'mandatory'=>$s['mandatory'],'photo_required'=>$s['photo'],'schedule'=>json_encode($schedule),'created_at'=>now(),'updated_at'=>now()]);
+                $task = DB::table('commitments')->find($id);
+                $this->tasks->generate($task, $s['mode'] === 'once' ? 367 : 14);
+                app(Accountability::class)->syncPauses();
+            }
             $this->state($p->id, null); $this->tg->send($p->id, 'Збережено 👣', [[['Мій тиждень','list:week'],['Меню','home']]]); return;
         }
         if ($action === 'list') { $this->listing($p, $value, $messageId); return; }
@@ -234,12 +290,22 @@ class Bot
         if ($action === 'stopseries') { $this->stopSeries($p, (int) $value); return; }
         if ($action === 'progress') {
             $rows = DB::table('occurrences')->where('profile_id',$p->id)->selectRaw('status, count(*) as total')->groupBy('status')->pluck('total','status');
-            $this->tg->send($p->id, 'Виконано: '.($rows['done'] ?? 0)."\nНа перевірці: ".($rows['review'] ?? 0)."\nПропущено: ".($rows['missed'] ?? 0)."\nНаступний розрахований штраф: ".(20+$p->violations).' грн. Пілот: без оплати.'); return;
+            $this->tg->send($p->id, 'Виконано: '.($rows['done'] ?? 0)."\nНа перевірці: ".($rows['review'] ?? 0)."\nПропущено: ".($rows['missed'] ?? 0)."\nДо скидання штрафу: {$p->success_streak}/10 успішних днів. Рахуються завершені дні зі зобов’язаннями; дні пауз і без задач пропускаються.\nНаступний розрахований штраф: ".(20+$p->violations).' грн. Пілот: без оплати.'); return;
         }
-        if ($action === 'settings') { $this->tg->send($p->id,"Часовий пояс: {$p->timezone}\nНагадування: за 30 хвилин до дедлайну.\nКалендар, паузи та донати — у наступних оновленнях.", [[['Часовий пояс','timezone']]]); return; }
+        if ($action === 'settings') { $this->tg->send($p->id,"Часовий пояс: {$p->timezone}\nНагадування: за 2 години до дедлайну.\nЕкстрена пауза: до 3 діб раз на 30 днів; далі через модерацію.\nКалендар та донати ще не підключені.", [[['Часовий пояс','timezone']],[['Екстрена пауза','pause']]]); return; }
         $o = $this->tasks->occurrence((int) $value, $p->id);
         if (!$o) { $this->tg->send($p->id, 'Ця дія вже неактуальна. Відкрий /menu.'); return; }
         if ($action === 'view') { $this->card($p, $o); return; }
+        if ($action === 'editsingle') {
+            if ($o->status!=='pending' || !$this->tasks->changeAllowed($o)) { $this->tg->send($p->id,'Змінити обсяг без штрафу вже не можна. Початкові умови залишаються.'); return; }
+            $this->state($p->id,['step'=>'edit_single_title','id'=>$o->id]);
+            $this->tg->send($p->id,'Напиши нову дію та обсяг лише для цього заняття. Зараз: '.$o->title); return;
+        }
+        if ($action === 'editsave' && ($s['step'] ?? '')==='edit_single_confirm' && $s['id']===$o->id) {
+            try { $this->tasks->reviseSingle($p->id,$o->id,$s['title']); $this->tg->send($p->id,'Умови цього заняття оновлено. Решта розкладу без змін.',[[['Мій тиждень','list:week']]]); }
+            catch (\DomainException $e) { $this->tg->send($p->id,$e->getMessage()); }
+            $this->state($p->id,null); return;
+        }
         if ($action === 'done') {
             if (!$this->tasks->confirmationAllowed($o)) { $this->tg->send($p->id, 'Підтвердження вже закрите або задача очікує перевірки.'); return; }
             if ($o->photo_required) {
@@ -290,7 +356,7 @@ class Bot
         $localStart = Time::now($p->timezone)->startOfDay();
         $end = $range === 'today' ? $localStart->endOfDay() : $localStart->addDays(6)->endOfDay();
         $query = DB::table('occurrences')->join('commitments', 'commitments.id', '=', 'occurrences.commitment_id')
-            ->where('occurrences.profile_id', $p->id)->whereBetween('due_at', [$localStart->utc(), $end->utc()]);
+            ->where('occurrences.profile_id', $p->id)->where('occurrences.status','!=','superseded')->whereBetween('due_at', [$localStart->utc(), $end->utc()]);
         $total = (clone $query)->count(); $size = 8;
         $pages = max(1, (int) ceil($total / $size));
         $page = min($pages - 1, max(0, (int) $requestedPage));
@@ -299,7 +365,7 @@ class Bot
         $text = ($range === 'today' ? 'Сьогодні 👣' : 'План на 7 днів 👣')."\n".$localStart->format('d.m').($range === 'week' ? ' — '.$end->format('d.m') : '');
         $buttons = []; $lastDate = null;
         $days = [1=>'Понеділок',2=>'Вівторок',3=>'Середа',4=>'Четвер',5=>'П’ятниця',6=>'Субота',7=>'Неділя'];
-        $statuses = ['pending'=>'Очікує','done'=>'✅ Виконано','review'=>'📷 На перевірці','rejected'=>'Фото відхилено','missed'=>'❌ Пропущено','cancelled'=>'Скасовано','excused'=>'Штраф скасовано'];
+        $statuses = ['pending'=>'Очікує','done'=>'✅ Виконано','review'=>'📷 На перевірці','rejected'=>'Фото відхилено','missed'=>'❌ Пропущено','cancelled'=>'Скасовано','excused'=>'Штраф скасовано','paused'=>'⏸ Пауза','pause_review'=>'⏳ Запит на паузу'];
         foreach ($rows as $i => $o) {
             $date = Time::parse($o->due_at, 'UTC')->setTimezone($p->timezone);
             if ($lastDate !== $date->toDateString()) {
@@ -327,10 +393,13 @@ class Bot
 
     private function card(object $p, object $o, ?int $messageId = null, ?string $back = null): void
     {
-        $status=['pending'=>'Очікує виконання','done'=>'✅ Виконано','review'=>'📷 На перевірці','rejected'=>'Фото відхилене — можна замінити до кінця вікна','missed'=>'Пропущено','cancelled'=>'Скасовано','excused'=>'Порушення скасоване адміністратором'][$o->status] ?? $o->status;
+        $status=['pending'=>'Очікує виконання','done'=>'✅ Виконано','review'=>'📷 На перевірці','rejected'=>'Фото відхилене — можна замінити до кінця вікна','missed'=>'Пропущено','cancelled'=>'Скасовано','excused'=>'Порушення скасоване адміністратором','paused'=>'⏸ Екстрена пауза','pause_review'=>'⏳ Очікує погодження паузи','superseded'=>'Замінено новою версією'][$o->status] ?? $o->status;
         $buttons=[];
         if ($this->tasks->confirmationAllowed($o)) $buttons[]=[['Підтвердити виконання','done:'.$o->id]];
         if ($o->status==='pending') $buttons[]=[['Перенести','move:'.$o->id],['Скасувати','cancel:'.$o->id]];
+        if ($o->status==='pending') $buttons[]=[['Змінити назву / обсяг','editsingle:'.$o->id]];
+        $task=DB::table('commitments')->find($o->commitment_id);
+        if ($task && $task->active && json_decode($task->schedule,true)['mode']!=='once') $buttons[]=[['Редагувати регулярний розклад','seriesedit:'.$task->id]];
         if ($o->status==='missed') $buttons[]=[['Оскаржити','appeal:'.$o->id]];
         if ($back) $buttons[] = [['← До списку', $back]];
         $text = ($o->mandatory?'🔒 ':'🌿 ').$o->title."\nДо ".Time::parse($o->due_at,'UTC')->setTimezone($p->timezone)->format('d.m H:i')."\n{$status}".($o->photo_required?"\n📷 Потрібне фото":'').($o->penalty_amount?"\nРозрахований штраф: {$o->penalty_amount} грн (без оплати в пілоті)":'');
@@ -357,7 +426,7 @@ class Bot
         foreach (DB::table('commitments')->where('profile_id',$p->id)->where('active',true)->get() as $task) {
             $s=json_decode($task->schedule,true); if ($s['mode']==='once') continue; $count++;
             $timing = !empty($s['day_times']) ? $this->weeklySummary($s) : 'Регулярно до '.$s['time'];
-            $this->tg->send($p->id,"{$task->title}\n{$timing}. Припинення прибере лише майбутні заняття, які ще можна скасувати без штрафу.",[[['Припинити повторення','stopseries:'.$task->id]]]);
+            $this->tg->send($p->id,"{$task->title}\n{$timing}. Припинення прибере лише майбутні заняття, які ще можна скасувати без штрафу.",[[['Редагувати','seriesedit:'.$task->id]],[['Припинити повторення','stopseries:'.$task->id]]]);
         }
         if (!$count) $this->tg->send($p->id,'Регулярних занять поки немає.');
     }
@@ -367,7 +436,7 @@ class Bot
         $task=DB::table('commitments')->where('id',$id)->where('profile_id',$p->id)->where('active',true)->first();
         if (!$task) return;
         DB::table('commitments')->where('id',$id)->update(['active'=>false]);
-        foreach (DB::table('occurrences')->where('commitment_id',$id)->where('status','pending')->get() as $row) {
+        foreach (DB::table('occurrences')->where('commitment_id',$id)->whereIn('status',['pending','paused','pause_review'])->where('due_at','>',now())->get() as $row) {
             $o=$this->tasks->occurrence($row->id,$p->id);
             if ($this->tasks->changeAllowed($o)) DB::table('occurrences')->where('id',$row->id)->update(['status'=>'cancelled']);
         }
@@ -407,11 +476,16 @@ class Bot
         $this->tg->enqueue('answerCallbackQuery',['callback_query_id'=>$cb['id']]);
         if ($chat!==$this->tg->setting('moderation_chat') || (string)$uid!==$this->tg->setting('admin_id')) return;
         [$action,$id]=array_pad(explode(':',$cb['data'] ?? '',2),2,'');
+        if (in_array($action,['pauseapprove','pausereject'],true)) {
+            app(Accountability::class)->moderatePause((int)$id,$action==='pauseapprove');
+            $this->tg->send($chat,'Рішення щодо паузи #'.(int)$id.' збережено.'); return;
+        }
         $row=DB::table('occurrences')->where('id',(int)$id)->lockForUpdate()->first(); if (!$row) return;
         $o=$this->tasks->occurrence($row->id,$row->profile_id);
         if ($action==='pardon' && $o->status==='missed') {
             DB::table('occurrences')->where('id',$o->id)->update(['status'=>'excused','penalty_amount'=>0,'reviewed_at'=>now()]);
-            if ($o->penalty_amount) DB::table('bot_profiles')->where('id',$o->profile_id)->where('violations','>',0)->decrement('violations');
+            $resetThrough=$this->tg->setting('penalty_reset_through_'.$o->profile_id);
+            if ($o->penalty_amount && (!$resetThrough || $o->due_at>$resetThrough)) DB::table('bot_profiles')->where('id',$o->profile_id)->where('violations','>',0)->decrement('violations');
             $this->tg->send($o->profile_id,"Оскарження прийняте. Штраф за «{$o->title}» скасовано."); $this->tg->send($chat,"Штраф #{$o->id} скасовано."); return;
         }
         if ($o->status!=='review') { $this->tg->send($chat,'Це фото вже перевірено.'); return; }
@@ -433,5 +507,16 @@ class Bot
             else $this->tg->send($o->profile_id,'До кінця вікна підтвердження можна надіслати інше фото.',[[['Надіслати фото','done:'.$o->id]]]);
             $this->tg->send($chat,"Відхилено #{$o->id}: {$reason}.");
         }
+    }
+
+    private function pauseMenu(object $p): void
+    {
+        $active=DB::table('bot_pauses')->where('profile_id',$p->id)->where('status','approved')->where('ends_at','>',now())->orderByDesc('ends_at')->first();
+        $text='Екстрена пауза для хвороби або надзвичайної ситуації. До 3 діб раз на 30 днів без погодження. Повторення та продовження — через модератора. Попередні пропуски не скасовуються.';
+        if ($active) $text.="\nПауза до ".Time::parse($active->ends_at,'UTC')->setTimezone($p->timezone)->format('d.m H:i').'. Новий запит продовжить її після цього часу.';
+        $rows=[[['1 доба','pausedays:1'],['2 доби','pausedays:2'],['3 доби','pausedays:3']]];
+        if ($active) { $text.="\nПри достроковому завершенні майбутні заняття одразу знову стануть чинними."; $rows[]=[['Завершити паузу та відновити план','pauseresume']]; }
+        if (DB::table('bot_pauses')->where('profile_id',$p->id)->where('status','pending')->exists()) { $text.="\nЄ запит на паузу, який очікує модерації."; $rows[]=[['Відкликати запит','pausewithdraw']]; }
+        $rows[]=[['Меню','home']]; $this->tg->send($p->id,$text,$rows);
     }
 }
