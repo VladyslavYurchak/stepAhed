@@ -18,6 +18,7 @@ class AccountabilityTest extends TestCase
     {
         parent::setUp(); Time::setTestNow(Time::parse('2026-10-29 12:00:00','UTC')); $this->travelTo(Time::now());
         DB::table('bot_profiles')->insert(['id'=>11,'name'=>'Тест','timezone'=>'Europe/Kyiv','onboarded'=>true,'created_at'=>now(),'updated_at'=>now()]);
+        DB::table('bot_settings')->insert(['key'=>'navigation_keyboard_11','value'=>'1']);
         DB::table('bot_settings')->insert([['key'=>'moderation_chat','value'=>'-100'],['key'=>'admin_id','value'=>'99']]);
     }
     protected function tearDown(): void { Time::setTestNow(); parent::tearDown(); }

@@ -27,6 +27,7 @@ class Bot
                 'created_at' => now(), 'updated_at' => now(),
             ]);
             $p = DB::table('bot_profiles')->where('id', $uid)->lockForUpdate()->first();
+            $this->tg->ensureNavigation($uid);
             if ($cb) {
                 $this->tg->enqueue('answerCallbackQuery', ['callback_query_id' => $cb['id']]);
                 $this->button($p, (string) ($cb['data'] ?? ''), (int) $m['message_id']);
@@ -53,6 +54,12 @@ class Bot
     private function message(object $p, array $m): void
     {
         $text = trim($m['text'] ?? '');
+        if (in_array($text,['Повернутися в меню','🏠 Повернутися в меню','Меню'],true)) {
+            $this->state($p->id,null);
+            if ($p->onboarded) $this->home($p->id);
+            else $this->timezoneMenu($p);
+            return;
+        }
         if (preg_match('~^/(start|menu)(?:@\w+)?(?:\s.*)?$~u', $text)) {
             $this->state($p->id, null);
             if (!$p->onboarded) {

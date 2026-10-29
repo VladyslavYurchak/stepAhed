@@ -21,6 +21,7 @@ class BotTest extends TestCase
         Time::setTestNow(Time::parse('2026-10-29 12:00:00','UTC'));
         $this->travelTo(Time::now());
         DB::table('bot_profiles')->insert(['id'=>11,'name'=>'Тест','timezone'=>'Europe/Kyiv','onboarded'=>true,'created_at'=>now(),'updated_at'=>now()]);
+        DB::table('bot_settings')->insert(['key'=>'navigation_keyboard_11','value'=>'1']);
     }
 
     protected function tearDown(): void { Time::setTestNow(); parent::tearDown(); }
@@ -349,5 +350,36 @@ class BotTest extends TestCase
         $this->assertDatabaseHas('bot_profiles',['id'=>11,'timezone'=>'America/Chicago']);
         $this->button('tzpick:berlin',505);
         $this->assertDatabaseHas('bot_profiles',['id'=>11,'timezone'=>'America/Chicago']);
+    }
+
+    public function test_menu_button_interrupts_any_draft_without_saving_or_cancelling_tasks(): void
+    {
+        $o=$this->makeOccurrence();
+        foreach (['timezone','title','time','daytime','photo','pause_reason','edit_single_title','cancel'] as $i=>$step) {
+            $this->draft(['step'=>$step,'id'=>$o->id]);
+            $this->text('Повернутися в меню',600+$i);
+            $this->assertDatabaseHas('bot_profiles',['id'=>11,'dialog'=>null]);
+            $this->assertDatabaseHas('occurrences',['id'=>$o->id,'status'=>'pending']);
+            $this->assertDatabaseCount('commitments',1);
+        }
+    }
+
+    public function test_persistent_menu_keyboard_is_installed_once_for_existing_user(): void
+    {
+        DB::table('bot_settings')->where('key','navigation_keyboard_11')->delete();
+        $this->button('timezone',601); $this->button('tzpick:warsaw',602);
+        $messages=DB::table('bot_outbox')->where('method','sendMessage')->get();
+        $this->assertCount(1,$messages);
+        $payload=json_decode($messages->first()->payload,true);
+        $this->assertSame('Повернутися в меню',$payload['reply_markup']['keyboard'][0][0]['text']);
+        $this->assertTrue($payload['reply_markup']['is_persistent']);
+        $this->assertFalse($payload['reply_markup']['one_time_keyboard']);
+    }
+
+    public function test_group_messages_do_not_receive_personal_navigation_keyboard(): void
+    {
+        app(\App\Services\Telegram::class)->send(-100,'Повідомлення модератору');
+        $payload=json_decode(DB::table('bot_outbox')->first()->payload,true);
+        $this->assertArrayNotHasKey('reply_markup',$payload);
     }
 }

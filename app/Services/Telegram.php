@@ -46,7 +46,22 @@ class Telegram
         if ($rows) $payload['reply_markup'] = ['inline_keyboard' => array_map(
             fn ($row) => array_map(fn ($b) => ['text' => $b[0], 'callback_data' => $b[1]], $row), $rows
         )];
+        elseif ((int) $chat > 0) {
+            $payload['reply_markup'] = [
+                'keyboard' => [[['text'=>'Повернутися в меню']]],
+                'is_persistent' => true, 'resize_keyboard' => true, 'one_time_keyboard' => false,
+                'input_field_placeholder' => 'Напиши відповідь або повернися в меню',
+            ];
+            DB::table('bot_settings')->updateOrInsert(['key'=>'navigation_keyboard_'.$chat],['value'=>'1']);
+        }
         $this->enqueue('sendMessage', $payload);
+    }
+
+    public function ensureNavigation(int $chat): void
+    {
+        if (!$this->setting('navigation_keyboard_'.$chat)) {
+            $this->send($chat,'Кнопка «Повернутися в меню» завжди доступна під полем введення. Вона закриває поточне налаштування без зміни збережених задач.');
+        }
     }
 
     public function edit(int|string $chat, int $messageId, string $text, array $rows = []): void
