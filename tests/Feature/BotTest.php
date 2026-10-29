@@ -382,4 +382,20 @@ class BotTest extends TestCase
         $payload=json_decode(DB::table('bot_outbox')->first()->payload,true);
         $this->assertArrayNotHasKey('reply_markup',$payload);
     }
+
+    public function test_settings_guide_opens_and_returns_in_same_message_without_video_link(): void
+    {
+        $this->button('settings',701);
+        $settings=json_decode(DB::table('bot_outbox')->where('method','editMessageText')->first()->payload,true);
+        $this->assertStringContainsString('Дізнайся про мене більше💜',json_encode($settings,JSON_UNESCAPED_UNICODE));
+        $this->button('guide',702);
+        $guide=json_decode(DB::table('bot_outbox')->where('method','editMessageText')->orderByDesc('id')->first()->payload,true);
+        $this->assertStringContainsString('Відеоінструкцію додамо згодом.',$guide['text']);
+        $this->assertStringContainsString('30 хвилин',$guide['text']);
+        $this->assertStringContainsString('2 години',$guide['text']);
+        $this->assertLessThanOrEqual(4096,mb_strlen($guide['text']));
+        $this->assertSame('settings',$guide['reply_markup']['inline_keyboard'][0][0]['callback_data']);
+        $this->button('settings',703);
+        $this->assertSame(0,DB::table('bot_outbox')->where('method','sendMessage')->count());
+    }
 }
