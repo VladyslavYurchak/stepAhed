@@ -56,7 +56,8 @@ class Bot
         if (preg_match('~^/(start|menu)(?:@\w+)?(?:\s.*)?$~u', $text)) {
             $this->state($p->id, null);
             if (!$p->onboarded) {
-                $this->tg->send($p->id, "Привіт! Я допоможу тримати слово перед собою.\n\n🔒 Зобов’язання — з погодженим штрафом за пропуск.\n🌿 Необов’язкові плани — без штрафів.\n\nЧасовий пояс зараз Europe/Kyiv. Підтвердь або зміни його.", [[['Час Києва підходить', 'onboard']], [['Інший часовий пояс', 'timezone']]]);
+                $this->tg->send($p->id, "Привіт! Я допоможу тримати слово перед собою.\n\n🔒 Зобов’язання — з погодженим штрафом за пропуск.\n🌿 Необов’язкові плани — без штрафів.");
+                $this->timezoneMenu($p);
             } else $this->home($p->id);
             return;
         }
@@ -179,7 +180,16 @@ class Bot
         [$action, $value] = array_pad(explode(':', $data, 2), 2, '');
         $s = json_decode($p->dialog ?? 'null', true);
         if ($action === 'onboard') { DB::table('bot_profiles')->where('id', $p->id)->update(['onboarded' => true]); $this->home($p->id); return; }
-        if ($action === 'timezone') { $this->state($p->id, ['step' => 'timezone']); $this->tg->send($p->id, 'Введи часовий пояс, наприклад Europe/Kyiv або Europe/Warsaw. Зміна діятиме для нових задач; існуючі дедлайни збережуться.'); return; }
+        if ($action === 'timezone') { $this->timezoneMenu($p, $messageId); return; }
+        if ($action === 'tzcustom' && ($s['step'] ?? '') === 'timezone') {
+            $this->tg->edit($p->id,$messageId,'Введи часовий пояс, наприклад Europe/Vilnius або America/Chicago. Або повернися до списку міст.',[[['← Обрати місто','timezone']]]); return;
+        }
+        if ($action === 'tzpick' && ($s['step'] ?? '') === 'timezone') {
+            $city=$this->timezoneCities()[$value] ?? null; if (!$city) return;
+            DB::table('bot_profiles')->where('id',$p->id)->update(['timezone'=>$city[1],'onboarded'=>true]);
+            $this->state($p->id,null);
+            $this->tg->edit($p->id,$messageId,'✅ Час налаштовано: '.$city[0]."\nЗараз там ".Time::now($city[1])->format('H:i').".\nНові задачі створюватимуться за цим часом. Уже погоджені дедлайни збережуться.",[[['Відкрити меню','home']],[['Обрати інше місто','timezone']]]); return;
+        }
         if (!$p->onboarded) { $this->tg->send($p->id, 'Спочатку підтвердь часовий пояс через /start.'); return; }
         if ($action === 'home') { $this->state($p->id, null); $this->home($p->id); return; }
         if ($action === 'new') { $this->state($p->id, ['step' => 'title']); $this->tg->send($p->id, 'Що хочеш зробити? Напиши конкретну дію та обсяг, наприклад «30 віджимань». Для виходу — /cancel.'); return; }
@@ -518,5 +528,28 @@ class Bot
         if ($active) { $text.="\nПри достроковому завершенні майбутні заняття одразу знову стануть чинними."; $rows[]=[['Завершити паузу та відновити план','pauseresume']]; }
         if (DB::table('bot_pauses')->where('profile_id',$p->id)->where('status','pending')->exists()) { $text.="\nЄ запит на паузу, який очікує модерації."; $rows[]=[['Відкликати запит','pausewithdraw']]; }
         $rows[]=[['Меню','home']]; $this->tg->send($p->id,$text,$rows);
+    }
+
+    private function timezoneCities(): array
+    {
+        return [
+            'kyiv'=>['🇺🇦 Київ','Europe/Kyiv'], 'warsaw'=>['🇵🇱 Варшава','Europe/Warsaw'],
+            'berlin'=>['🇩🇪 Берлін','Europe/Berlin'], 'prague'=>['🇨🇿 Прага','Europe/Prague'],
+            'london'=>['🇬🇧 Лондон','Europe/London'], 'paris'=>['🇫🇷 Париж','Europe/Paris'],
+            'madrid'=>['🇪🇸 Мадрид','Europe/Madrid'], 'rome'=>['🇮🇹 Рим','Europe/Rome'],
+            'lisbon'=>['🇵🇹 Лісабон','Europe/Lisbon'], 'chisinau'=>['🇲🇩 Кишинів','Europe/Chisinau'],
+            'toronto'=>['🇨🇦 Торонто','America/Toronto'], 'newyork'=>['🇺🇸 Нью-Йорк','America/New_York'],
+        ];
+    }
+
+    private function timezoneMenu(object $p, ?int $messageId = null): void
+    {
+        $this->state($p->id,['step'=>'timezone']); $buttons=[];
+        foreach ($this->timezoneCities() as $key=>$city) $buttons[]=[$city[0].' · '.Time::now($city[1])->format('H:i'),'tzpick:'.$key];
+        $rows=array_chunk($buttons,2); $rows[]=[['Інше місто','tzcustom']];
+        $text='Обери місто, за часом якого плануватимемо задачі. Якщо твого міста немає, можна обрати інше з таким самим часом.';
+        if ($p->onboarded) $text.="\nЗміна діятиме для нових задач; уже погоджені дедлайни збережуться.";
+        if ($messageId) $this->tg->edit($p->id,$messageId,$text,$rows);
+        else $this->tg->send($p->id,$text,$rows);
     }
 }

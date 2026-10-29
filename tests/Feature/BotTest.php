@@ -321,4 +321,33 @@ class BotTest extends TestCase
         $this->button('pauseconfirm',304);
         $this->assertDatabaseCount('bot_pauses',1);
     }
+
+    public function test_timezone_picker_shows_city_buttons_in_same_message(): void
+    {
+        $this->button('timezone',501);
+        $this->assertSame(0,DB::table('bot_outbox')->where('method','sendMessage')->count());
+        $payload=json_decode(DB::table('bot_outbox')->where('method','editMessageText')->first()->payload,true);
+        $this->assertSame('tzpick:kyiv',$payload['reply_markup']['inline_keyboard'][0][0]['callback_data']);
+        $this->assertSame('tzpick:warsaw',$payload['reply_markup']['inline_keyboard'][0][1]['callback_data']);
+        $this->assertStringContainsString('Київ',$payload['reply_markup']['inline_keyboard'][0][0]['text']);
+    }
+
+    public function test_city_selection_changes_timezone_without_moving_existing_deadlines(): void
+    {
+        $o=$this->makeOccurrence();
+        $this->button('timezone',501); $this->button('tzpick:warsaw',502);
+        $this->assertDatabaseHas('bot_profiles',['id'=>11,'timezone'=>'Europe/Warsaw','onboarded'=>true,'dialog'=>null]);
+        $this->assertDatabaseHas('occurrences',['id'=>$o->id,'due_at'=>$o->due_at]);
+        $this->assertSame(0,DB::table('bot_outbox')->where('method','sendMessage')->count());
+    }
+
+    public function test_timezone_manual_fallback_and_invalid_city_are_safe(): void
+    {
+        $this->button('timezone',501); $this->button('tzpick:invalid',502);
+        $this->assertDatabaseHas('bot_profiles',['id'=>11,'timezone'=>'Europe/Kyiv']);
+        $this->button('tzcustom',503); $this->text('America/Chicago',504);
+        $this->assertDatabaseHas('bot_profiles',['id'=>11,'timezone'=>'America/Chicago']);
+        $this->button('tzpick:berlin',505);
+        $this->assertDatabaseHas('bot_profiles',['id'=>11,'timezone'=>'America/Chicago']);
+    }
 }
