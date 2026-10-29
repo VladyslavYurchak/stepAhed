@@ -237,4 +237,50 @@ class BotTest extends TestCase
         $this->assertArrayNotHasKey('day_times',$schedule);
         $this->assertDatabaseHas('occurrences',['commitment_id'=>$task->id,'due_at'=>'2026-10-30 17:00:00']);
     }
+
+    public function test_week_overview_is_one_grouped_message(): void
+    {
+        $first = $this->makeOccurrence();
+        $second = $this->makeOccurrence(['due_at'=>Time::now()->addDay()->toDateTimeString()]);
+        $this->button('list:week',201);
+        $this->assertSame(0,DB::table('bot_outbox')->where('method','sendMessage')->count());
+        $edits=DB::table('bot_outbox')->where('method','editMessageText')->get();
+        $this->assertCount(1,$edits);
+        $payload=json_decode($edits->first()->payload,true);
+        $this->assertStringContainsString('Четвер · 29.10',$payload['text']);
+        $this->assertStringContainsString('П’ятниця · 30.10',$payload['text']);
+        $this->assertSame('detail:'.$first->id.',week,0',$payload['reply_markup']['inline_keyboard'][0][0]['callback_data']);
+        $this->assertSame('detail:'.$second->id.',week,0',$payload['reply_markup']['inline_keyboard'][1][0]['callback_data']);
+    }
+
+    public function test_overview_pagination_and_details_reuse_same_message(): void
+    {
+        $o=$this->makeOccurrence();
+        for ($i=1;$i<10;$i++) DB::table('occurrences')->insert([
+            'profile_id'=>11,'commitment_id'=>$o->commitment_id,'due_at'=>Time::parse($o->due_at,'UTC')->addMinutes($i)->toDateTimeString(),'status'=>'pending',
+        ]);
+        $this->button('list:today,1',201);
+        $payload=json_decode(DB::table('bot_outbox')->where('method','editMessageText')->orderByDesc('id')->first()->payload,true);
+        $this->assertStringContainsString('Сторінка 2 із 2 · задач: 10',$payload['text']);
+        $this->assertStringContainsString('9. ',$payload['text']);
+        $this->assertLessThan(4096,mb_strlen($payload['text']));
+        $detail=$payload['reply_markup']['inline_keyboard'][0][0]['callback_data'];
+        $this->button($detail,202);
+        $card=json_decode(DB::table('bot_outbox')->where('method','editMessageText')->orderByDesc('id')->first()->payload,true);
+        $buttons=$card['reply_markup']['inline_keyboard'];
+        $this->assertSame('list:today,1',end($buttons)[0]['callback_data']);
+        $this->button('list:today,1',203);
+        $this->assertSame(0,DB::table('bot_outbox')->where('method','sendMessage')->count());
+        $this->assertSame(3,DB::table('bot_outbox')->where('method','editMessageText')->count());
+    }
+
+    public function test_empty_overview_is_single_message_and_week_is_seven_local_days(): void
+    {
+        $this->makeOccurrence(['due_at'=>Time::now()->addDays(7)->toDateTimeString()]);
+        $this->button('list:week',201);
+        $payload=json_decode(DB::table('bot_outbox')->where('method','editMessageText')->first()->payload,true);
+        $this->assertStringContainsString('29.10 — 04.11',$payload['text']);
+        $this->assertStringContainsString('Поки задач немає.',$payload['text']);
+        $this->assertSame(0,DB::table('bot_outbox')->where('method','sendMessage')->count());
+    }
 }

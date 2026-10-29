@@ -222,7 +222,14 @@ class Bot
             $this->tasks->generate($task, $s['mode'] === 'once' ? 367 : 14);
             $this->state($p->id, null); $this->tg->send($p->id, 'Збережено 👣', [[['Мій тиждень','list:week'],['Меню','home']]]); return;
         }
-        if ($action === 'list') { $this->listing($p, $value); return; }
+        if ($action === 'list') { $this->listing($p, $value, $messageId); return; }
+        if ($action === 'detail') {
+            [$id, $range, $page] = array_pad(explode(',', $value, 3), 3, '');
+            $o = $this->tasks->occurrence((int) $id, $p->id);
+            if (!$o) return;
+            $back = 'list:'.($range === 'today' ? 'today' : 'week').','.max(0, (int) $page);
+            $this->card($p, $o, $messageId, $back); return;
+        }
         if ($action === 'series') { $this->series($p); return; }
         if ($action === 'stopseries') { $this->stopSeries($p, (int) $value); return; }
         if ($action === 'progress') {
@@ -276,24 +283,59 @@ class Bot
         else $this->tg->send($uid, $text, $rows);
     }
 
-    private function listing(object $p, string $range): void
+    private function listing(object $p, string $value, ?int $messageId = null): void
     {
-        $start=Time::now($p->timezone)->startOfDay()->utc();
-        $end=$range==='today' ? $start->setTimezone($p->timezone)->endOfDay()->utc() : Time::now($p->timezone)->addDays(7)->endOfDay()->utc();
-        $rows=DB::table('occurrences')->where('profile_id',$p->id)->whereBetween('due_at',[$start,$end])->orderBy('due_at')->limit(25)->get();
-        $this->tg->send($p->id,$range==='today'?'Твій день 👣':'План на найближчі 7 днів 👣');
-        foreach ($rows as $row) $this->card($p,$this->tasks->occurrence($row->id,$p->id));
-        if ($rows->isEmpty()) $this->tg->send($p->id,'Поки задач немає.',[[['＋ Додати','new']]]);
+        [$range, $requestedPage] = array_pad(explode(',', $value, 2), 2, '0');
+        $range = $range === 'today' ? 'today' : 'week';
+        $localStart = Time::now($p->timezone)->startOfDay();
+        $end = $range === 'today' ? $localStart->endOfDay() : $localStart->addDays(6)->endOfDay();
+        $query = DB::table('occurrences')->join('commitments', 'commitments.id', '=', 'occurrences.commitment_id')
+            ->where('occurrences.profile_id', $p->id)->whereBetween('due_at', [$localStart->utc(), $end->utc()]);
+        $total = (clone $query)->count(); $size = 8;
+        $pages = max(1, (int) ceil($total / $size));
+        $page = min($pages - 1, max(0, (int) $requestedPage));
+        $rows = $query->orderBy('due_at')->orderBy('occurrences.id')->offset($page * $size)->limit($size)
+            ->select('occurrences.*', 'commitments.title', 'commitments.mandatory', 'commitments.photo_required')->get();
+        $text = ($range === 'today' ? 'Сьогодні 👣' : 'План на 7 днів 👣')."\n".$localStart->format('d.m').($range === 'week' ? ' — '.$end->format('d.m') : '');
+        $buttons = []; $lastDate = null;
+        $days = [1=>'Понеділок',2=>'Вівторок',3=>'Середа',4=>'Четвер',5=>'П’ятниця',6=>'Субота',7=>'Неділя'];
+        $statuses = ['pending'=>'Очікує','done'=>'✅ Виконано','review'=>'📷 На перевірці','rejected'=>'Фото відхилено','missed'=>'❌ Пропущено','cancelled'=>'Скасовано','excused'=>'Штраф скасовано'];
+        foreach ($rows as $i => $o) {
+            $date = Time::parse($o->due_at, 'UTC')->setTimezone($p->timezone);
+            if ($lastDate !== $date->toDateString()) {
+                $text .= "\n\n".$days[$date->dayOfWeekIso].' · '.$date->format('d.m');
+                $lastDate = $date->toDateString();
+            }
+            $number = $page * $size + $i + 1;
+            $text .= "\n{$number}. ".$date->format('H:i').' '.($o->mandatory ? '🔒 ' : '🌿 ').$o->title.
+                "\n    ".($statuses[$o->status] ?? $o->status).($o->photo_required && $o->status === 'pending' ? ' · 📷 Фото' : '');
+            $buttons[] = [[$number.'. '.mb_strimwidth($o->title, 0, 34, '…'), 'detail:'.$o->id.','.$range.','.$page]];
+        }
+        if (!$total) $text .= "\n\nПоки задач немає.";
+        else $text .= "\n\nОбери задачу нижче, щоб підтвердити, перенести або скасувати.";
+        if ($pages > 1) {
+            $text .= "\nСторінка ".($page + 1)." із {$pages} · задач: {$total}";
+            $nav = [];
+            if ($page > 0) $nav[] = ['← Назад', 'list:'.$range.','.($page - 1)];
+            if ($page + 1 < $pages) $nav[] = ['Далі →', 'list:'.$range.','.($page + 1)];
+            $buttons[] = $nav;
+        }
+        $buttons[] = [['＋ Додати', 'new'], ['Меню', 'home']];
+        if ($messageId) $this->tg->edit($p->id, $messageId, $text, $buttons);
+        else $this->tg->send($p->id, $text, $buttons);
     }
 
-    private function card(object $p, object $o): void
+    private function card(object $p, object $o, ?int $messageId = null, ?string $back = null): void
     {
         $status=['pending'=>'Очікує виконання','done'=>'✅ Виконано','review'=>'📷 На перевірці','rejected'=>'Фото відхилене — можна замінити до кінця вікна','missed'=>'Пропущено','cancelled'=>'Скасовано','excused'=>'Порушення скасоване адміністратором'][$o->status] ?? $o->status;
         $buttons=[];
         if ($this->tasks->confirmationAllowed($o)) $buttons[]=[['Підтвердити виконання','done:'.$o->id]];
         if ($o->status==='pending') $buttons[]=[['Перенести','move:'.$o->id],['Скасувати','cancel:'.$o->id]];
         if ($o->status==='missed') $buttons[]=[['Оскаржити','appeal:'.$o->id]];
-        $this->tg->send($p->id,($o->mandatory?'🔒 ':'🌿 ').$o->title."\nДо ".Time::parse($o->due_at,'UTC')->setTimezone($p->timezone)->format('d.m H:i')."\n{$status}".($o->photo_required?"\n📷 Потрібне фото":'').($o->penalty_amount?"\nРозрахований штраф: {$o->penalty_amount} грн (без оплати в пілоті)":''),$buttons);
+        if ($back) $buttons[] = [['← До списку', $back]];
+        $text = ($o->mandatory?'🔒 ':'🌿 ').$o->title."\nДо ".Time::parse($o->due_at,'UTC')->setTimezone($p->timezone)->format('d.m H:i')."\n{$status}".($o->photo_required?"\n📷 Потрібне фото":'').($o->penalty_amount?"\nРозрахований штраф: {$o->penalty_amount} грн (без оплати в пілоті)":'');
+        if ($messageId) $this->tg->edit($p->id, $messageId, $text, $buttons);
+        else $this->tg->send($p->id, $text, $buttons);
     }
 
     private function cancelQuestion(int $uid,int $id,int $q): void
