@@ -27,7 +27,9 @@ class FundsTest extends TestCase
     }
     private function fund(bool $active=true): int
     {
-        return DB::transaction(fn()=>app(Funds::class)->createFund($active?99:11,$this->data(),$active));
+        $id=DB::transaction(fn()=>app(Funds::class)->createFund(99,$this->data(),true));
+        if (!$active) DB::table('charity_funds')->where('id',$id)->update(['status'=>'pending','proposed_by'=>11]);
+        return $id;
     }
     private function occurrence(): int
     {
@@ -73,10 +75,9 @@ class FundsTest extends TestCase
     public function test_proposal_is_not_public_before_approval(): void
     {
         $this->button('proposefund',101);
-        $i=102; foreach($this->data() as $value) $this->text($value,$i++,11);
         $this->button('fundsubmit',110);
-        $fund=DB::table('charity_funds')->first();
-        $this->assertSame('pending',$fund->status);
+        $this->assertDatabaseCount('charity_funds',0);
+        $fund=DB::table('charity_funds')->find($this->fund(false));
         $this->button('funds',111);
         $latest=json_decode(DB::table('bot_outbox')->where('method','editMessageText')->orderByDesc('id')->first()->payload,true);
         $this->assertStringNotContainsString($fund->title,$latest['text']);
@@ -85,6 +86,23 @@ class FundsTest extends TestCase
         $prompt=json_decode(DB::table('bot_outbox')->where('method','editMessageText')->orderByDesc('id')->first()->payload,true);
         $this->button($prompt['reply_markup']['inline_keyboard'][0][0]['callback_data'],113,99);
         $this->assertDatabaseHas('charity_funds',['id'=>$fund->id,'status'=>'active']);
+    }
+
+    public function test_fund_catalog_is_hidden_from_user_home_and_settings_but_visible_to_admin(): void
+    {
+        $this->text('/menu',701,11); $this->button('settings',702,11);
+        foreach(DB::table('bot_outbox')->get() as $m) $this->assertStringNotContainsString('Благодійні збори',$m->payload);
+        $this->text('/menu',703,99); $this->button('settings',704,99);
+        $last=json_decode(DB::table('bot_outbox')->where('method','editMessageText')->orderByDesc('id')->first()->payload,true);
+        $this->assertStringContainsString('Благодійні збори',json_encode($last,JSON_UNESCAPED_UNICODE));
+    }
+
+    public function test_old_user_proposal_draft_cannot_be_submitted_after_feature_is_disabled(): void
+    {
+        DB::table('bot_profiles')->where('id',11)->update(['dialog'=>json_encode(['step'=>'fund_wizard','admin'=>false,'field'=>'title','data'=>[]])]);
+        $this->text('Новий збір',701,11);
+        $this->assertDatabaseHas('bot_profiles',['id'=>11,'dialog'=>null]);
+        $this->assertDatabaseCount('charity_funds',0);
     }
 
     public function test_fund_links_only_accept_exact_https_monobank_jar_host(): void

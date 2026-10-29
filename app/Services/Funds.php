@@ -65,6 +65,9 @@ class Funds
         if (($s['admin'] ?? false) && !$this->isAdmin($p->id)) {
             $this->state($p->id,null); $this->tg->send($p->id,'Недостатньо прав для адміністрування.'); return true;
         }
+        if ($s['step']!=='donation_photo' && !$this->isAdmin($p->id)) {
+            $this->state($p->id,null); $this->tg->send($p->id,'Керування зборами доступне лише адміністратору.',[[['Повернутися в меню','home']]]); return true;
+        }
         if ($s['step']==='donation_photo') { $this->uploadReceipt($p,$m,(int)$s['donation_id']); return true; }
         $value=trim($m['text'] ?? ''); $field=$s['field'];
         if (!$this->validateField($field,$value,!($s['admin'] ?? false))) {
@@ -97,6 +100,10 @@ class Funds
         if ($chat!==$uid) return false;
         [$action,$value]=array_pad(explode(':',$data,2),2,'');
         $s=json_decode(DB::table('bot_profiles')->where('id',$uid)->value('dialog') ?? 'null',true);
+        if (in_array($action,['funds','fundview','proposefund','fundsubmit'],true) && !$this->isAdmin($uid)) {
+            if (str_starts_with($s['step'] ?? '', 'fund_')) $this->state($uid,null);
+            $this->show($uid,'Керування зборами доступне лише адміністратору.',[[['Повернутися в меню','home']]],$messageId); return true;
+        }
         if ($action==='funds') { $this->publicList($uid,$value,$messageId); return true; }
         if ($action==='mydonations') {
             $buttons=[];
@@ -104,7 +111,8 @@ class Funds
                 $status=['awaiting'=>'Очікує квитанцію','pending'=>'На перевірці','approved'=>'✅ Підтверджено','rejected'=>'Відхилено','void'=>'Скасовано'][$d->status];
                 $buttons[]=[['#'.$d->id.' · '.$d->expected_amount.' грн · '.$status,'donationview:'.$d->id]];
             }
-            $buttons[]=[['До зборів','funds'],['Повернутися в меню','home']];
+            if ($this->isAdmin($uid)) $buttons[]=[['До зборів','funds']];
+            $buttons[]=[['Повернутися в меню','home']];
             $this->show($uid,'Мої донати · останні 15 записів',$buttons,$messageId); return true;
         }
         if ($action==='donationview') {
@@ -146,7 +154,7 @@ class Funds
 
     public function createFund(int $uid,array $data,bool $admin): int
     {
-        if ($admin && !$this->isAdmin($uid)) throw new \DomainException('Недостатньо прав.');
+        if (!$this->isAdmin($uid)) throw new \DomainException('Недостатньо прав.');
         foreach ($this->fields() as $field=>$label) if (!$this->validateField($field,$data[$field] ?? '',!$admin)) throw new \DomainException('Некоректне поле: '.$field);
         return DB::table('charity_funds')->insertGetId([
             ...array_intersect_key($data,$this->fields()), 'status'=>$admin?'active':'pending',
@@ -164,7 +172,7 @@ class Funds
         foreach ($query->offset($page*6)->limit(6)->get() as $fund) $buttons[]=[[$fund->title,'fundview:'.$fund->id]];
         if (!$total) $text.="\nПоки немає активних зборів. Адміністратор має додати першу банку.";
         if ($pages>1) { $nav=[]; if($page) $nav[]=['←','funds:'.($page-1)]; if($page+1<$pages) $nav[]=['→','funds:'.($page+1)]; $buttons[]=$nav; }
-        $buttons[]=[['Запропонувати збір','proposefund']]; $buttons[]=[['Мої донати','mydonations']]; $buttons[]=[['Повернутися в меню','home']];
+        $buttons[]=[['Додати збір','a:add']]; $buttons[]=[['Мої донати','mydonations']]; $buttons[]=[['Повернутися в меню','home']];
         $this->show($uid,$text,$buttons,$messageId);
     }
 
