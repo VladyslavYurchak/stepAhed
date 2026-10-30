@@ -131,15 +131,14 @@ class CalendarsTest extends TestCase
     {
         $service=app(Calendars::class); $url=$service->link(11); $other=$service->link(22);
         $this->button('calendarrotateask',101);
-        $s=json_decode(DB::table('bot_profiles')->find(11)->dialog,true);
-        $this->button('calendarrotate:'.$s['nonce'],102,22);
+        $this->button('calendarrotate:old-nonce',102,22);
         $this->assertSame($other,$service->link(22));
         $this->button('calendars',103);
-        $this->button('calendarrotate:'.$s['nonce'],104);
+        $this->button('calendarrotate:old-nonce',104);
         $this->assertSame($url,$service->link(11));
         $this->button('calendarrotateask',105);
-        $s=json_decode(DB::table('bot_profiles')->find(11)->dialog,true);
-        $this->button('calendarrotate:'.$s['nonce'],106);
-        $this->assertNotSame($url,$service->link(11));
+        $this->button('calendarrotate:old-nonce',106);
+        $this->button('calendaroff',107);
+        $this->assertSame($url,$service->link(11));
     }
 }

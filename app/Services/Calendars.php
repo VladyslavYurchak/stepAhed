@@ -36,15 +36,13 @@ class Calendars
     public function button(object $p, string $data, int $messageId): bool
     {
         $tg=app(Telegram::class);
+        if (in_array($data,['calendarlink','calendaroff','calendarrotateask'],true) || str_starts_with($data,'calendarrotate:')) {
+            return $this->button($p,'calendars',$messageId);
+        }
         if ($data==='calendars') {
             DB::table('bot_profiles')->where('id',$p->id)->update(['dialog'=>null]);
-            $enabled=DB::table('bot_calendar_subscriptions')->where('profile_id',$p->id)->exists();
-            $text="🗓 Твої календарі\n\nЯ можу показувати твої задачі в Google Calendar та календарі iPhone.\n\nПідключення — за особистим посиланням. Календар отримуватиме назви задач, дедлайни та статуси. Кожен, хто матиме це посилання, зможе їх побачити — не пересилай його.\n\nЗадачі змінюй і підтверджуй у боті. Оновлення в календарі можуть надходити із затримкою. Календар показує дедлайни, а не тривалість занять.";
-            $buttons=[[['🍎 Підключити календар iPhone','calendarapple']],[[$enabled ? 'Показати моє посилання' : 'Створити особисте посилання','calendarlink']]];
-            if ($enabled) {
-                $buttons[]=[['Замінити посилання','calendarrotateask']];
-                $buttons[]=[['Вимкнути доступ','calendaroff']];
-            }
+            $text="🗓 Твої календарі\n\nОбери, куди показувати твої задачі:\n\nGoogle Calendar — для Android та інших пристроїв.\niPhone — підписка в календарі Apple.\n\nКалендар отримуватиме назви задач, дедлайни та статуси. Додавай, змінюй і підтверджуй задачі в боті. Календар показує дедлайни, а не тривалість занять. Особисті сторінки підключення не пересилай іншим людям 💜";
+            $buttons=[[['🗓 Google Calendar · Android','googlecalendar']],[['🍎 Підключити календар iPhone','calendarapple']]];
             $buttons[]=[['← Налаштування','settings']];
             $tg->edit($p->id,$messageId,$text,$buttons); return true;
         }
@@ -55,34 +53,6 @@ class Calendars
                 'link_preview_options'=>['is_disabled'=>true],
                 'reply_markup'=>['inline_keyboard'=>[[['text'=>'🍎 Підключити календар iPhone','url'=>rtrim(config('app.url'),'/').'/calendar/apple/'.$token]],[['text'=>'← Календарі','callback_data'=>'calendars']]]]],$p->id);
             return true;
-        }
-        if ($data==='calendarrotateask') {
-            $nonce=bin2hex(random_bytes(8));
-            DB::table('bot_profiles')->where('id',$p->id)->update(['dialog'=>json_encode([
-                'step'=>'calendar_rotate','nonce'=>$nonce,'message_id'=>$messageId,'expires_at'=>now()->addMinutes(10)->timestamp,
-            ])]);
-            $tg->edit($p->id,$messageId,'Замінити особисте посилання? Старе припинить працювати. Нове потрібно буде додати до календаря заново.',[
-                [['Замінити','calendarrotate:'.$nonce]],[['Повернутися','calendars']],
-            ]); return true;
-        }
-        if ($data==='calendaroff') {
-            $this->revoke($p->id);
-            $tg->edit($p->id,$messageId,'Доступ до календаря вимкнений. Старе посилання більше не працює. Копії подій, уже збережені Google чи iPhone, можна прибрати, видаливши підписку в календарі.',[[['← Календарі','calendars']]]); return true;
-        }
-        if ($data==='calendarlink' || str_starts_with($data,'calendarrotate:')) {
-            if (str_starts_with($data,'calendarrotate:')) {
-                $s=json_decode($p->dialog ?? 'null',true);
-                if (($s['step'] ?? '')!=='calendar_rotate' || ($s['message_id'] ?? null)!==$messageId
-                    || ($s['expires_at'] ?? 0)<now()->timestamp || !hash_equals($s['nonce'] ?? '',substr($data,15))) return true;
-                $this->revoke($p->id);
-            }
-            DB::table('bot_profiles')->where('id',$p->id)->update(['dialog'=>null]);
-            $url=$this->link($p->id);
-            $tg->enqueue('sendMessage',[
-                'chat_id'=>$p->id,'parse_mode'=>'HTML','link_preview_options'=>['is_disabled'=>true],
-                'text'=>"🗓 Підключення календаря\n\nНатисни «Особисте посилання на календар» нижче — я скопіюю його. Потім встав у свій календар.\n\n<b>Google Calendar</b>\nВідкрий календар у браузері на комп’ютері → біля «Інші календарі» натисни «+» → «За URL-адресою» → встав посилання.\n\n<b>iPhone</b>\nУ застосунку «Календар» відкрий список календарів → «Додати календар» → «Додати підписний календар» → встав посилання.\n\nВажливо додати саме підписку, а не просто імпортувати файл — тоді зміни підтягуватимуться автоматично. Частоту оновлення визначає календарний застосунок. Регулярні задачі видно на найближчі 14 днів; цей період щодня продовжується.\n\nНе пересилай посилання іншим людям 💜",
-                'reply_markup'=>['inline_keyboard'=>[[['text'=>'📋 Особисте посилання на календар','copy_text'=>['text'=>$url]]],[['text'=>'← Календарі','callback_data'=>'calendars']]]],
-            ]); return true;
         }
         return false;
     }

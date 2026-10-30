@@ -76,12 +76,12 @@ class CalendarLab
             DB::table('calendar_lab_connections')->updateOrInsert(['profile_id'=>$uid],[
                 'access_token'=>Crypt::encryptString($body['access_token']),'refresh_token'=>Crypt::encryptString($body['refresh_token']),
                 'expires_at'=>now()->addSeconds((int)($body['expires_in'] ?? 3600)),'status'=>'connecting','error'=>null,
-                'created_at'=>now(),'updated_at'=>now(),
+                'sync_mode'=>config('calendar_lab.main_enabled') ? 'main' : 'lab','created_at'=>now(),'updated_at'=>now(),
             ]);
             // Calendar creation has no idempotency key. Do not blindly retry it after an uncertain network response.
             $calendar=$this->api($uid,'POST','/calendars',[
-                'summary'=>'Крок вперед · ТЕСТ 🧪','timeZone'=>DB::table('bot_profiles')->where('id',$uid)->value('timezone'),
-                'description'=>'Окремий тест синхронізації. Основні задачі бота не змінюються.',
+                'summary'=>config('calendar_lab.main_enabled') ? 'Крок вперед 🌱' : 'Крок вперед · ТЕСТ 🧪','timeZone'=>DB::table('bot_profiles')->where('id',$uid)->value('timezone'),
+                'description'=>config('calendar_lab.main_enabled') ? 'Твої задачі з Telegram. Змінюй і підтверджуй їх у боті.' : 'Окремий тест синхронізації. Основні задачі бота не змінюються.',
             ]);
             if (!$calendar->successful() || !is_string($calendar->json('id')) || $calendar->json('id')==='primary') throw new \RuntimeException('Calendar creation failed.');
             DB::table('calendar_lab_connections')->where('profile_id',$uid)->update(['calendar_id'=>$calendar->json('id'),'status'=>'active']);
@@ -91,7 +91,7 @@ class CalendarLab
         }
     }
 
-    private function api(int $uid, string $method, string $path, array $data=[], ?string $etag=null)
+    public function api(int $uid, string $method, string $path, array $data=[], ?string $etag=null)
     {
         $c=DB::table('calendar_lab_connections')->where('profile_id',$uid)->first();
         if (!$c || !$c->access_token) throw new \RuntimeException('Not connected.');
@@ -135,7 +135,7 @@ class CalendarLab
     {
         if (!$this->configured()) return;
         DB::table('calendar_lab_links')->where('expires_at','<=',now())->delete();
-        foreach (DB::table('calendar_lab_connections')->whereIn('status',['active','deleting'])->pluck('profile_id') as $uid) {
+        foreach (DB::table('calendar_lab_connections')->where('sync_mode','lab')->whereIn('status',['active','deleting'])->pluck('profile_id') as $uid) {
             if (!$this->allowed($uid)) continue;
             Cache::lock('calendar-lab-'.$uid,120)->get(function () use ($uid) {
                 try { $this->sync((int)$uid); }
@@ -254,6 +254,7 @@ class CalendarLab
     {
         DB::transaction(function () use ($uid) {
             DB::table('calendar_lab_tasks')->where('profile_id',$uid)->delete();
+            DB::table('google_calendar_events')->where('profile_id',$uid)->delete();
             DB::table('calendar_lab_connections')->where('profile_id',$uid)->delete();
             DB::table('calendar_lab_links')->where('profile_id',$uid)->delete();
         });

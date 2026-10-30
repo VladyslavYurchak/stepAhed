@@ -18,6 +18,7 @@ Schedule::call(fn () => Artisan::call('bot:tick'))->name('bot-tick')->everyMinut
 
 Artisan::command('bot:calendar-lab', function () {
     app(CalendarLab::class)->run();
+    app(\App\Services\GoogleCalendar::class)->run();
 })->purpose('Synchronize the isolated administrator-only Google calendar test');
 Schedule::call(fn () => Artisan::call('bot:calendar-lab'))->name('calendar-lab')->everyMinute()->withoutOverlapping();
 

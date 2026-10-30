@@ -31,6 +31,7 @@ class UserData
         $data['calendar_subscription'] = DB::table('bot_calendar_subscriptions')->where('profile_id',$uid)->first(['created_at','updated_at']);
         $data['calendar_lab_tasks'] = DB::table('calendar_lab_tasks')->where('profile_id',$uid)->get();
         $data['calendar_lab_connection'] = DB::table('calendar_lab_connections')->where('profile_id',$uid)->first(['status','last_synced_at','created_at']);
+        $data['google_calendar_events'] = DB::table('google_calendar_events')->where('profile_id',$uid)->get();
         return json_encode($data, JSON_PRETTY_PRINT|JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR);
     }
 

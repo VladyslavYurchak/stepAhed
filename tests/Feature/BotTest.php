@@ -33,6 +33,24 @@ class BotTest extends TestCase
         return app(Tasks::class)->occurrence($oid,11);
     }
 
+    public function test_execute_button_sits_beside_add_and_lists_only_unfinished_tasks(): void
+    {
+        $pending=$this->makeOccurrence();
+        $done=$this->makeOccurrence(['status'=>'done']);
+        $cancelled=$this->makeOccurrence(['status'=>'cancelled']);
+        $this->button('home',950);
+        $menu=json_decode(DB::table('bot_outbox')->where('method','sendMessage')->orderByDesc('id')->value('payload'),true);
+        $this->assertSame('new',$menu['reply_markup']['inline_keyboard'][0][0]['callback_data']);
+        $this->assertSame('✅ Виконати задачу',$menu['reply_markup']['inline_keyboard'][0][1]['text'] ?? '');
+        foreach (['today','week'] as $i=>$range) {
+            $this->button('list:'.$range,951+$i);
+            $payload=DB::table('bot_outbox')->where('method','editMessageText')->orderByDesc('id')->value('payload');
+            $this->assertStringContainsString('detail:'.$pending->id.',',$payload);
+            $this->assertStringNotContainsString('detail:'.$done->id.',',$payload);
+            $this->assertStringNotContainsString('detail:'.$cancelled->id.',',$payload);
+        }
+    }
+
     private function button(string $data,int $update=1,int $uid=11,int $chat=11,string $type='private'): void
     {
         app(Bot::class)->update(['update_id'=>$update,'callback_query'=>['id'=>(string)$update,'from'=>['id'=>$uid,'first_name'=>'Тест'],'data'=>$data,'message'=>['message_id'=>1,'chat'=>['id'=>$chat,'type'=>$type]]]]);

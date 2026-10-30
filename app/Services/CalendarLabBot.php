@@ -12,6 +12,7 @@ class CalendarLabBot
     public function button(object $p, string $data, int $messageId): bool
     {
         if ($data!=='lab' && !str_starts_with($data,'lab:')) return false;
+        if (config('calendar_lab.main_enabled')) return app(GoogleCalendar::class)->button($p,'googlecalendar',$messageId);
         if (!$this->lab->allowed($p->id)) return true;
         [$action,$value]=array_pad(explode(':',substr($data,4),2),2,'');
         if ($data==='lab') {
@@ -121,6 +122,7 @@ class CalendarLabBot
     {
         $s=json_decode($p->dialog ?? 'null',true);
         if (!in_array($s['step'] ?? '',['lab_title','lab_time'],true)) return false;
+        if (config('calendar_lab.main_enabled')) { $this->state($p->id,null); return true; }
         if (!$this->lab->allowed($p->id)) { $this->state($p->id,null); return true; }
         if (!DB::table('calendar_lab_connections')->where('profile_id',$p->id)->where('status','active')->exists()) {
             $this->state($p->id,null); return true;

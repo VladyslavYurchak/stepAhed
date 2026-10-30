@@ -55,7 +55,8 @@ class Bot
     private function home(int $uid): void
     {
         $buttons = [
-            [['＋ Додати задачу', 'new']], [['☀️ Сьогодні', 'list:today'], ['🗓 Мій тиждень', 'list:week']],
+            [['＋ Додати задачу', 'new'], ['✅ Виконати задачу', 'list:today']],
+            [['🗓 Мій тиждень', 'list:week']],
             [['📈 Мій прогрес', 'progress']], [['⚙️ Налаштування', 'settings']],
             [['☀️ Я прокинувся', 'awake']],
             [['⏸ Екстрена пауза', 'pause']],
@@ -63,7 +64,7 @@ class Bot
         if (app(Funds::class)->isAdmin($uid)) {
             $buttons[] = [['💛 Благодійні збори', 'funds']];
             $buttons[] = [['🛠 Адміністрування', 'a:menu']];
-            if (config('calendar_lab.enabled')) $buttons[] = [['🧪 Тест Google Calendar', 'lab']];
+            if (config('calendar_lab.enabled') && !config('calendar_lab.main_enabled')) $buttons[] = [['🧪 Тест Google Calendar', 'lab']];
         }
         $p = DB::table('bot_profiles')->where('id', $uid)->first();
         if ($p->awake_last_date===Time::now($p->timezone)->toDateString()) {
@@ -295,6 +296,7 @@ class Bot
         }
         if (!$p->onboarded) { $this->tg->send($p->id, 'Спочатку підтвердь часовий пояс через /start.'); return; }
         if (app(DailyRhythm::class)->button($p,$data)) return;
+        if (app(GoogleCalendar::class)->button($p,$data,$messageId)) return;
         if (app(CalendarLabBot::class)->button($p,$data,$messageId)) return;
         if (app(Calendars::class)->button($p,$data,$messageId)) return;
         if (app(Funds::class)->button($p->id,$data,$p->id,$messageId)) return;
@@ -514,13 +516,13 @@ class Bot
         $localStart = Time::now($p->timezone)->startOfDay();
         $end = $range === 'today' ? $localStart->endOfDay() : $localStart->addDays(6)->endOfDay();
         $query = DB::table('occurrences')->join('commitments', 'commitments.id', '=', 'occurrences.commitment_id')
-            ->where('occurrences.profile_id', $p->id)->where('occurrences.status','!=','superseded')->whereBetween('due_at', [$localStart->utc(), $end->utc()]);
+            ->where('occurrences.profile_id', $p->id)->whereIn('occurrences.status',['pending','rejected','review','paused','pause_review'])->whereBetween('due_at', [$localStart->utc(), $end->utc()]);
         $total = (clone $query)->count(); $size = 8;
         $pages = max(1, (int) ceil($total / $size));
         $page = min($pages - 1, max(0, (int) $requestedPage));
         $rows = $query->orderBy('due_at')->orderBy('occurrences.id')->offset($page * $size)->limit($size)
             ->select('occurrences.*', 'commitments.title', 'commitments.mandatory', 'commitments.photo_required')->get();
-        $text = ($range === 'today' ? 'Сьогодні 👣' : 'План на 7 днів 👣')."\n".$localStart->format('d.m').($range === 'week' ? ' — '.$end->format('d.m') : '');
+        $text = ($range === 'today' ? '✅ Виконати задачу · сьогодні' : 'Невиконані задачі на 7 днів 👣')."\n".$localStart->format('d.m').($range === 'week' ? ' — '.$end->format('d.m') : '');
         $buttons = []; $lastDate = null;
         $days = [1=>'Понеділок',2=>'Вівторок',3=>'Середа',4=>'Четвер',5=>'П’ятниця',6=>'Субота',7=>'Неділя'];
         $statuses = ['pending'=>'Очікує','done'=>'✅ Виконано','review'=>'📷 На перевірці','rejected'=>'Фото відхилено','missed'=>'❌ Пропущено','cancelled'=>'Скасовано','excused'=>'Штраф скасовано','paused'=>'⏸ Пауза','pause_review'=>'⏳ Запит на паузу'];
