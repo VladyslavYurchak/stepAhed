@@ -38,6 +38,53 @@ class BotTest extends TestCase
         app(Bot::class)->update(['update_id'=>$update,'callback_query'=>['id'=>(string)$update,'from'=>['id'=>$uid,'first_name'=>'Тест'],'data'=>$data,'message'=>['message_id'=>1,'chat'=>['id'=>$chat,'type'=>$type]]]]);
     }
 
+    public function test_time_buttons_use_local_next_hour_and_keep_manual_input(): void
+    {
+        Time::setTestNow(Time::parse('2026-10-30 13:20:00', 'UTC'));
+        $this->draft(['step'=>'schedule']);
+        $this->button('schedule:today', 801);
+        $payload = json_decode(DB::table('bot_outbox')->where('method','sendMessage')->orderByDesc('id')->value('payload'), true);
+        $buttons = array_merge(...$payload['reply_markup']['inline_keyboard']);
+        $this->assertSame('16:00', $buttons[0]['text']);
+        $this->assertSame('16:30', $buttons[1]['text']);
+        $this->assertSame('23:00', end($buttons)['text']);
+        $this->assertCount(15, $buttons);
+        $this->button($buttons[1]['callback_data'], 802);
+        $s = json_decode(DB::table('bot_profiles')->where('id',11)->value('dialog'), true);
+        $this->assertSame('confirm', $s['step']);
+        $this->assertSame('16:30', $s['time']);
+        $this->draft(['step'=>'schedule']);
+        $this->button('schedule:today', 803);
+        $this->button($buttons[0]['callback_data'], 804);
+        $this->assertSame('time', json_decode(DB::table('bot_profiles')->where('id',11)->value('dialog'), true)['step']);
+        $this->text('16:17', 805);
+        $this->assertSame('16:17', json_decode(DB::table('bot_profiles')->where('id',11)->value('dialog'), true)['time']);
+    }
+
+    public function test_late_evening_time_prompt_has_no_next_day_buttons(): void
+    {
+        Time::setTestNow(Time::parse('2026-10-30 21:20:00', 'UTC'));
+        $this->draft(['step'=>'schedule']);
+        $this->button('schedule:today', 811);
+        $payload = json_decode(DB::table('bot_outbox')->where('method','sendMessage')->orderByDesc('id')->value('payload'), true);
+        $this->assertArrayNotHasKey('inline_keyboard', $payload['reply_markup']);
+        $this->assertStringContainsString('введи свій', $payload['text']);
+    }
+
+    public function test_per_day_time_buttons_cannot_answer_the_next_day(): void
+    {
+        $this->draft(['weekdays'=>[1,5]]);
+        $this->button('daysdone', 821);
+        $this->button('timechoice:separate', 822);
+        $payload = json_decode(DB::table('bot_outbox')->where('method','sendMessage')->orderByDesc('id')->value('payload'), true);
+        $choice = $payload['reply_markup']['inline_keyboard'][0][0]['callback_data'];
+        $this->button($choice, 823);
+        $this->button($choice, 824);
+        $s = json_decode(DB::table('bot_profiles')->where('id',11)->value('dialog'), true);
+        $this->assertSame(1, $s['time_index']);
+        $this->assertCount(1, $s['day_times']);
+    }
+
     public function test_three_hour_boundary_is_strict(): void
     {
         $o=$this->makeOccurrence(); $tasks=app(Tasks::class);

@@ -157,12 +157,31 @@ class Bot
         catch (\Throwable) { return null; }
     }
 
-    private function askTime(int $uid): void { $this->tg->send($uid, 'До котрої години виконати? Введи час у форматі 21:00.'); }
+    private function askTime(int $uid): void
+    {
+        $this->tg->send($uid, 'До котрої години виконати? Обери час або введи свій у форматі 21:00.', $this->timeButtons($uid));
+    }
+
+    private function timeButtons(int $uid): array
+    {
+        $p = DB::table('bot_profiles')->where('id', $uid)->first();
+        $s = json_decode($p->dialog, true);
+        $s['time_picker_token'] = bin2hex(random_bytes(6));
+        $this->state($uid, $s);
+        $localNow = Time::now($s['timezone'] ?? $p->timezone);
+        $startHour = $localNow->hour + 1;
+        $buttons = [];
+        for ($minute = $startHour * 60; $minute <= 23 * 60; $minute += 30) {
+            $label = sprintf('%02d:%02d', intdiv($minute, 60), $minute % 60);
+            $buttons[] = [$label, 'picktime:'.$s['time_picker_token'].':'.$label];
+        }
+        return array_chunk($buttons, 4);
+    }
 
     private function askDayTime(int $uid, int $day): void
     {
         $name = [1=>'Понеділок',2=>'Вівторок',3=>'Середа',4=>'Четвер',5=>'П’ятниця',6=>'Субота',7=>'Неділя'][$day];
-        $this->tg->send($uid, "{$name} — до котрої години виконати? Введи час, наприклад 21:00.");
+        $this->tg->send($uid, "{$name} — до котрої години виконати? Обери час або введи свій, наприклад 21:00.", $this->timeButtons($uid));
     }
 
     private function weeklySummary(array $s): string
@@ -192,6 +211,15 @@ class Bot
     {
         [$action, $value] = array_pad(explode(':', $data, 2), 2, '');
         $s = json_decode($p->dialog ?? 'null', true);
+        if ($action === 'picktime') {
+            [$token, $time] = array_pad(explode(':', $value, 2), 2, '');
+            if (!in_array($s['step'] ?? '', ['time', 'daytime'], true)
+                || !isset($s['time_picker_token']) || !hash_equals($s['time_picker_token'], $token)
+                || !preg_match('/^(?:[01]\d|2[0-2]):(?:00|30)$|^23:00$/', $time)) return;
+            $this->message($p, ['text' => $time]);
+            $this->tg->edit($p->id, $messageId, 'Обраний час: '.$time);
+            return;
+        }
         if ($action === 'onboard') { DB::table('bot_profiles')->where('id', $p->id)->update(['onboarded' => true]); $this->home($p->id); return; }
         if ($action === 'timezone') { $this->timezoneMenu($p, $messageId); return; }
         if ($action === 'tzcustom' && ($s['step'] ?? '') === 'timezone') {
