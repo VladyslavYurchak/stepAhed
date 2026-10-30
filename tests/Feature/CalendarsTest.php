@@ -27,6 +27,31 @@ class CalendarsTest extends TestCase
 
     private function token(string $url): string { return basename(parse_url($url,PHP_URL_PATH),'.ics'); }
 
+    public function test_iphone_page_opens_subscription_and_stops_after_revocation(): void
+    {
+        $service=app(Calendars::class); $token=$this->token($service->link(11));
+        $path='/calendar/apple/'.$token;
+        $this->get($path)->assertOk()->assertHeader('Referrer-Policy','no-referrer')
+            ->assertHeader('X-Robots-Tag','noindex, nofollow')
+            ->assertSee('webcal://stepahead.example/calendar/feed/'.$token.'.ics?v=2',false)
+            ->assertSee('Відкрити календар iPhone')->assertDontSee('User 11');
+        $service->revoke(11);
+        $this->get($path)->assertNotFound();
+        $this->get('/calendar/apple/'.str_repeat('a',64))->assertNotFound();
+    }
+
+    public function test_iphone_button_keeps_existing_subscription_token(): void
+    {
+        $url=app(Calendars::class)->link(11);
+        $this->button('calendarapple',800);
+        $payload=json_decode(DB::table('bot_outbox')->where('method','sendMessage')->orderByDesc('id')->first()->payload,true);
+        $this->assertArrayHasKey('inline_keyboard',$payload['reply_markup']);
+        $this->assertSame('https://stepahead.example/calendar/apple/'.$this->token($url),$payload['reply_markup']['inline_keyboard'][0][0]['url']);
+        $this->assertSame($url,app(Calendars::class)->link(11));
+        app(Calendars::class)->revoke(11);
+        $this->assertSame(0,DB::table('bot_outbox')->where('method','sendMessage')->count());
+    }
+
     private function task(int $uid, string $title='Моя задача', string $status='pending'): int
     {
         $id=DB::table('commitments')->insertGetId(['profile_id'=>$uid,'title'=>$title,'mandatory'=>true,'schedule'=>'{}','created_at'=>now()]);

@@ -9,6 +9,17 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', fn () => view('home'));
+Route::get('/calendar/apple/{token}', function (string $token) {
+    $subscription=\Illuminate\Support\Facades\DB::table('bot_calendar_subscriptions')
+        ->join('bot_profiles','bot_profiles.id','=','bot_calendar_subscriptions.profile_id')
+        ->where('token_hash',hash('sha256',$token))->exists();
+    abort_unless($subscription,404);
+    $feed=rtrim(config('app.url'),'/').'/calendar/feed/'.$token.'.ics?v=2';
+    return response()->view('calendar-apple',['webcal'=>preg_replace('~^https?://~','webcal://',$feed)])->withHeaders([
+        'Cache-Control'=>'private, no-store','Referrer-Policy'=>'no-referrer','X-Robots-Tag'=>'noindex, nofollow',
+        'Content-Security-Policy'=>"default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
+    ]);
+})->where('token','[a-f0-9]{64}')->middleware('throttle:30,1');
 Route::get('/calendar-lab/connect/{token}',[CalendarLabController::class,'show'])->where('token','[a-f0-9]{64}')->middleware('throttle:20,1');
 Route::post('/calendar-lab/connect/{token}',[CalendarLabController::class,'start'])->where('token','[a-f0-9]{64}')->middleware('throttle:10,1');
 Route::get('/calendar-lab/callback',[CalendarLabController::class,'callback'])->middleware('throttle:20,1');

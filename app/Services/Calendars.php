@@ -26,7 +26,8 @@ class Calendars
         DB::table('bot_calendar_subscriptions')->where('profile_id',$uid)->delete();
         // Remove old messages containing the URL from the pending delivery queue.
         foreach (DB::table('bot_outbox')->where('data_owner_id',$uid)->get() as $item) {
-            if (str_contains($item->payload,'/calendar/feed/') || str_contains($item->payload,'\/calendar\/feed\/')) {
+            $payload=str_replace('\/','/',$item->payload);
+            if (str_contains($payload,'/calendar/feed/') || str_contains($payload,'/calendar/apple/')) {
                 DB::table('bot_outbox')->where('id',$item->id)->delete();
             }
         }
@@ -39,13 +40,21 @@ class Calendars
             DB::table('bot_profiles')->where('id',$p->id)->update(['dialog'=>null]);
             $enabled=DB::table('bot_calendar_subscriptions')->where('profile_id',$p->id)->exists();
             $text="🗓 Твої календарі\n\nЯ можу показувати твої задачі в Google Calendar та календарі iPhone.\n\nПідключення — за особистим посиланням. Календар отримуватиме назви задач, дедлайни та статуси. Кожен, хто матиме це посилання, зможе їх побачити — не пересилай його.\n\nЗадачі змінюй і підтверджуй у боті. Оновлення в календарі можуть надходити із затримкою. Календар показує дедлайни, а не тривалість занять.";
-            $buttons=[[[$enabled ? 'Показати моє посилання' : 'Створити особисте посилання','calendarlink']]];
+            $buttons=[[['🍎 Підключити календар iPhone','calendarapple']],[[$enabled ? 'Показати моє посилання' : 'Створити особисте посилання','calendarlink']]];
             if ($enabled) {
                 $buttons[]=[['Замінити посилання','calendarrotateask']];
                 $buttons[]=[['Вимкнути доступ','calendaroff']];
             }
             $buttons[]=[['← Налаштування','settings']];
             $tg->edit($p->id,$messageId,$text,$buttons); return true;
+        }
+        if ($data==='calendarapple') {
+            $url=$this->link($p->id);
+            $token=basename(parse_url($url,PHP_URL_PATH),'.ics');
+            $tg->enqueue('sendMessage',['chat_id'=>$p->id,'text'=>"🍎 Календар iPhone\n\nВідкрий сторінку нижче, натисни «Відкрити календар iPhone» і підтвердь підписку. Копіювати посилання й шукати налаштування не потрібно.\n\nЯкщо цей календар уже підключений, повторно додавати його не потрібно. Задачі змінюй і підтверджуй у боті.",
+                'link_preview_options'=>['is_disabled'=>true],
+                'reply_markup'=>['inline_keyboard'=>[[['text'=>'🍎 Підключити календар iPhone','url'=>rtrim(config('app.url'),'/').'/calendar/apple/'.$token]],[['text'=>'← Календарі','callback_data'=>'calendars']]]]],$p->id);
+            return true;
         }
         if ($data==='calendarrotateask') {
             $nonce=bin2hex(random_bytes(8));
