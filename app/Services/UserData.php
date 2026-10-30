@@ -29,6 +29,8 @@ class UserData
             return $row;
         })->all();
         $data['calendar_subscription'] = DB::table('bot_calendar_subscriptions')->where('profile_id',$uid)->first(['created_at','updated_at']);
+        $data['calendar_lab_tasks'] = DB::table('calendar_lab_tasks')->where('profile_id',$uid)->get();
+        $data['calendar_lab_connection'] = DB::table('calendar_lab_connections')->where('profile_id',$uid)->first(['status','last_synced_at','created_at']);
         return json_encode($data, JSON_PRETTY_PRINT|JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR);
     }
 
@@ -36,6 +38,7 @@ class UserData
     {
         $deleted = Cache::lock('telegram-outbox', 120)->get(fn () => DB::transaction(function () use ($uid) {
             // Delete dependent rows first, preserving shared funds and other accounts.
+            app(CalendarLab::class)->forget($uid);
             DB::table('bot_calendar_subscriptions')->where('profile_id',$uid)->delete();
             DB::table('bot_deferred_notifications')->where('profile_id', $uid)->delete();
             DB::table('donation_receipts')->where('profile_id', $uid)->delete();

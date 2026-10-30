@@ -3,6 +3,7 @@
 use App\Services\Tasks;
 use App\Services\Backups;
 use App\Services\Telegram;
+use App\Services\CalendarLab;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Schedule;
@@ -14,6 +15,11 @@ Artisan::command('bot:tick', function () {
 
 // Shared Hostinger disables proc_open; run in-process instead of spawning PHP.
 Schedule::call(fn () => Artisan::call('bot:tick'))->name('bot-tick')->everyMinute()->withoutOverlapping();
+
+Artisan::command('bot:calendar-lab', function () {
+    app(CalendarLab::class)->run();
+})->purpose('Synchronize the isolated administrator-only Google calendar test');
+Schedule::call(fn () => Artisan::call('bot:calendar-lab'))->name('calendar-lab')->everyMinute()->withoutOverlapping();
 
 Artisan::command('bot:backup', function () {
     $this->info('Verified snapshot: '.app(Backups::class)->create());

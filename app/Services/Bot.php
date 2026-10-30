@@ -57,6 +57,7 @@ class Bot
         if (app(Funds::class)->isAdmin($uid)) {
             $buttons[] = [['💛 Благодійні збори', 'funds']];
             $buttons[] = [['🛠 Адміністрування', 'a:menu']];
+            if (config('calendar_lab.enabled')) $buttons[] = [['🧪 Тест Google Calendar', 'lab']];
         }
         $p = DB::table('bot_profiles')->where('id', $uid)->first();
         $start = Time::now($p->timezone)->startOfDay();
@@ -123,6 +124,7 @@ class Bot
         }
         if (!$p->onboarded) { $this->tg->send($p->id, 'Спочатку відкрий /start і підтвердь часовий пояс.'); return; }
         if (app(DailyRhythm::class)->message($p,$text)) return;
+        if (app(CalendarLabBot::class)->message($p,$text)) return;
         if (app(Funds::class)->message($p,$m)) return;
         if (in_array($s['step'] ?? '', ['edit_single_title','edit_series_title'], true)) {
             if (mb_strlen($text) < 3 || mb_strlen($text) > 180) { $this->tg->send($p->id,'Введи нову дію та обсяг: від 3 до 180 символів.'); return; }
@@ -284,6 +286,7 @@ class Bot
         }
         if (!$p->onboarded) { $this->tg->send($p->id, 'Спочатку підтвердь часовий пояс через /start.'); return; }
         if (app(DailyRhythm::class)->button($p,$data)) return;
+        if (app(CalendarLabBot::class)->button($p,$data,$messageId)) return;
         if (app(Calendars::class)->button($p,$data,$messageId)) return;
         if (app(Funds::class)->button($p->id,$data,$p->id,$messageId)) return;
         if ($action === 'home') { $this->state($p->id, null); $this->home($p->id); return; }

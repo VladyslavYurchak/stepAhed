@@ -26,6 +26,8 @@ Every minute: `/opt/alt/php83/usr/bin/php /home/u253935843/stepahead-app/artisan
 
 Calendar subscriptions: Settings → «🗓 Мої календарі». Google Calendar and iPhone can read a personal ICS feed; updates are pull-based, not immediate. Changes and completion remain in the bot. See [docs/CALENDARS.md](docs/CALENDARS.md).
 
+An optional administrator-only «🧪 Тест Google Calendar» experiment uses OAuth and a separate Google calendar and task list. It never edits the main commitments or imports personal calendars. Deployment, limits and removal: [docs/CALENDAR_LAB.md](docs/CALENDAR_LAB.md).
+
 Personal data controls: Settings → «🔐 Мої дані». Owner-only JSON export and confirmed deletion of live account records are implemented; Telegram messages and historical backups are not automatically deleted. See [docs/USER_DATA.md](docs/USER_DATA.md).
 
 ## Backups

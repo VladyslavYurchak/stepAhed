@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\SetupController;
+use App\Http\Controllers\CalendarLabController;
 use App\Services\Bot;
 use App\Services\Telegram;
 use App\Services\Calendars;
@@ -8,6 +9,9 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', fn () => view('home'));
+Route::get('/calendar-lab/connect/{token}',[CalendarLabController::class,'show'])->where('token','[a-f0-9]{64}')->middleware('throttle:20,1');
+Route::post('/calendar-lab/connect/{token}',[CalendarLabController::class,'start'])->where('token','[a-f0-9]{64}')->middleware('throttle:10,1');
+Route::get('/calendar-lab/callback',[CalendarLabController::class,'callback'])->middleware('throttle:20,1');
 Route::get('/calendar/feed/{token}.ics', function (string $token, Calendars $calendars) {
     $feed=$calendars->feed($token);
     abort_if($feed===null,404);
