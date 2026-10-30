@@ -32,7 +32,7 @@ class Accountability
             $tz = DB::table('bot_profiles')->where('id', $uid)->value('timezone');
             $tg->send($tg->setting('moderation_chat'), "Запит на екстрену паузу #{$id}\nКористувач: {$uid}\n".
                 Time::parse($pause->starts_at, 'UTC')->setTimezone($tz)->format('d.m H:i').' — '.Time::parse($pause->ends_at, 'UTC')->setTimezone($tz)->format('d.m H:i')."\nПричина: {$reason}",
-                [[['Схвалити', 'pauseapprove:'.$id], ['Відхилити', 'pausereject:'.$id]]]);
+                [[['Схвалити', 'pauseapprove:'.$id], ['Відхилити', 'pausereject:'.$id]]], null, $uid);
         }
         return $pause;
     }

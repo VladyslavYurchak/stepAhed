@@ -20,7 +20,12 @@ class Telegram
         $token ??= $encrypted ? Crypt::decryptString($encrypted) : '';
         if (!$token) throw new \RuntimeException('Telegram token is not configured');
         try {
-            $response = Http::connectTimeout(4)->timeout(12)->post("https://api.telegram.org/bot{$token}/{$method}", $payload);
+            $request = Http::connectTimeout(4)->timeout(12);
+            if ($method === 'sendDocument' && isset($payload['document_json'])) {
+                $request = $request->attach('document', $payload['document_json'], 'krok-vpered-data.json');
+                unset($payload['document_json']);
+            }
+            $response = $request->post("https://api.telegram.org/bot{$token}/{$method}", $payload);
         } catch (\Throwable) {
             throw new \RuntimeException('Telegram network error');
         }
@@ -32,15 +37,16 @@ class Telegram
         return $body['result'] ?? [];
     }
 
-    public function enqueue(string $method, array $payload): void
+    public function enqueue(string $method, array $payload, ?int $dataOwner = null): void
     {
         DB::table('bot_outbox')->insert([
             'method' => $method, 'payload' => json_encode($payload, JSON_UNESCAPED_UNICODE),
             'available_at' => now(),
+            'data_owner_id' => $dataOwner ?? ((int)($payload['chat_id'] ?? 0) > 0 ? (int)$payload['chat_id'] : null),
         ]);
     }
 
-    public function send(int|string $chat, string $text, array $rows = [], ?string $parseMode = null): void
+    public function send(int|string $chat, string $text, array $rows = [], ?string $parseMode = null, ?int $dataOwner = null): void
     {
         $payload = ['chat_id' => $chat, 'text' => $text];
         if ($parseMode !== null) $payload['parse_mode'] = $parseMode;
@@ -55,7 +61,7 @@ class Telegram
             ];
             DB::table('bot_settings')->updateOrInsert(['key'=>'navigation_keyboard_'.$chat],['value'=>'1']);
         }
-        $this->enqueue('sendMessage', $payload);
+        $this->enqueue('sendMessage', $payload, $dataOwner);
     }
 
     public function ensureNavigation(int $chat): void

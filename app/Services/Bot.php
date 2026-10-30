@@ -22,6 +22,10 @@ class Bot
                 $this->group($uid, $m, $cb);
                 return;
             }
+            if ($cb && !DB::table('bot_profiles')->where('id', $uid)->exists()) {
+                $this->tg->enqueue('answerCallbackQuery', ['callback_query_id'=>$cb['id'], 'text'=>'Почни заново через /start.']);
+                return;
+            }
             DB::table('bot_profiles')->insertOrIgnore([
                 'id' => $uid, 'name' => mb_substr($from['first_name'] ?? 'Друже', 0, 100),
                 'created_at' => now(), 'updated_at' => now(),
@@ -69,6 +73,7 @@ class Bot
             $this->state($p->id, null);
             if (!$p->onboarded) {
                 $this->tg->send($p->id, "Привіт! Я допоможу тримати слово перед собою.\n\n🔒 Зобов’язання — з погодженим штрафом за пропуск.\n🌿 Необов’язкові плани — без штрафів.\n\nПілотна версія: штрафи обліковуються. Донати на схвалені збори добровільні; доступ до бота не блокується.");
+                $this->tg->send($p->id, app(UserData::class)->notice());
                 $this->timezoneMenu($p);
             } else $this->home($p->id);
             return;
@@ -345,10 +350,40 @@ class Bot
             $this->tg->send($p->id, 'Виконано: '.($rows['done'] ?? 0)."\nНа перевірці: ".($rows['review'] ?? 0)."\nПропущено: ".($rows['missed'] ?? 0)."\nДо скидання штрафу: {$p->success_streak}/10 успішних днів. Рахуються завершені дні зі зобов’язаннями; дні пауз і без задач пропускаються.\nНаступний розрахований штраф: ".(20+$p->violations).' грн. Пілот: без оплати.'); return;
         }
         if ($action === 'settings') {
+            $this->state($p->id, null);
             $buttons=[[['Часовий пояс','timezone']],[['Екстрена пауза','pause']]];
             if (app(Funds::class)->isAdmin($p->id)) $buttons[]=[['Благодійні збори','funds']];
+            $buttons[]=[['🔐 Мої дані','privacy']];
             $buttons[]=[['Дізнайся про мене більше💜','guide']]; $buttons[]=[['Повернутися в меню','home']];
             $this->tg->edit($p->id,$messageId,"Часовий пояс: {$p->timezone}\nНагадування: за 2 години до дедлайну.\nЕкстрена пауза: до 3 діб раз на 30 днів; далі через модерацію.\nДобровільні донати — на схвалені збори. Календар ще не підключений.",$buttons); return;
+        }
+        if ($action === 'privacy') {
+            $this->state($p->id, null);
+            $this->tg->edit($p->id, $messageId, app(UserData::class)->notice(), [
+                [['📄 Експортувати мої дані','dataexport']],
+                [['🗑 Видалити мій акаунт','dataerase']],
+                [['← Налаштування','settings']],
+            ]); return;
+        }
+        if ($action === 'dataexport') {
+            $this->state($p->id, null);
+            $this->tg->enqueue('sendDocument', ['chat_id'=>$p->id, 'document_json'=>app(UserData::class)->export($p->id),
+                'caption'=>'Твої дані у форматі JSON. Збережи файл у приватному місці.']); return;
+        }
+        if ($action === 'dataerase') {
+            $token = bin2hex(random_bytes(8));
+            $this->state($p->id, ['step'=>'data_erase_confirm','token'=>$token,'expires_at'=>now()->addMinutes(10)->timestamp,'message_id'=>$messageId]);
+            $this->tg->edit($p->id, $messageId, "Видалити акаунт і всі твої задачі, розклади, прогрес, паузи та квитанції з робочої бази?\n\nНагадування припиняться. Відновлення через бота неможливе. Перед цим можна зберегти експорт.\n\nПовідомлення й фото в Telegram та старі резервні копії автоматично не видаляються. Дані адміністратора для роботи бота зберігаються окремо: видалення особистого профілю не відключає адміністрування.", [
+                [['Так, видалити назавжди','dataeraseconfirm:'.$token]],
+                [['Ні, повернутися','privacy']],
+            ]); return;
+        }
+        if ($action === 'dataeraseconfirm') {
+            if (($s['step'] ?? '') !== 'data_erase_confirm' || ($s['message_id'] ?? null) !== $messageId
+                || ($s['expires_at'] ?? 0) < now()->timestamp || !hash_equals($s['token'] ?? '', $value)) return;
+            try { app(UserData::class)->delete($p->id); }
+            catch (\DomainException $e) { $this->tg->send($p->id, $e->getMessage()); return; }
+            $this->tg->edit($p->id, $messageId, 'Профіль і пов’язані записи видалені з робочої бази. Нагадування зупинені. Для нового початку — /start.'); return;
         }
         if ($action === 'guide') { $this->guide($p->id,$messageId); return; }
         $o = $this->tasks->occurrence((int) $value, $p->id);
@@ -393,7 +428,7 @@ class Bot
         }
         if ($action === 'appeal' && $o->status === 'missed') {
             $group=$this->tg->setting('moderation_chat');
-            if ($group) { $this->tg->send($group,"Оскарження #{$o->id}\n{$p->name} ({$p->id})\n{$o->title}\nШтраф: {$o->penalty_amount} грн",[[['Скасувати штраф','pardon:'.$o->id]]]); $this->tg->send($p->id,'Запит передано адміністратору.'); }
+            if ($group) { $this->tg->send($group,"Оскарження #{$o->id}\n{$p->name} ({$p->id})\n{$o->title}\nШтраф: {$o->penalty_amount} грн",[[['Скасувати штраф','pardon:'.$o->id]]], null, $p->id); $this->tg->send($p->id,'Запит передано адміністратору.'); }
             return;
         }
         $this->tg->send($p->id,'Ця кнопка вже неактуальна. Відкрий задачу з меню.');
@@ -518,7 +553,7 @@ class Bot
         $duplicate=DB::table('occurrences')->where('photo_unique_id',$photo['file_unique_id'])->where('id','!=',$o->id)->exists();
         DB::table('occurrences')->where('id',$o->id)->update(['status'=>'review','submitted_at'=>now(),'photo_file_id'=>$photo['file_id'],'photo_unique_id'=>$photo['file_unique_id'],'updated_at'=>now()]);
         $caption="Перевірка #{$o->id}\n{$p->name} ({$p->id})\n{$o->title}\nДедлайн: ".Time::parse($o->due_at,'UTC')->setTimezone($p->timezone)->format('d.m H:i')."\nНадіслано: ".Time::now($p->timezone)->format('d.m H:i').($duplicate?"\n⚠️ Це фото вже надсилали для іншої задачі.":'');
-        $this->tg->enqueue('sendPhoto',['chat_id'=>$chat,'photo'=>$photo['file_id'],'caption'=>$caption,'reply_markup'=>['inline_keyboard'=>[[['text'=>'✅ Підтвердити','callback_data'=>'approve:'.$o->id]],[['text'=>'❌ Не пройшло перевірку','callback_data'=>'reject:'.$o->id]]]]]);
+        $this->tg->enqueue('sendPhoto',['chat_id'=>$chat,'photo'=>$photo['file_id'],'caption'=>$caption,'reply_markup'=>['inline_keyboard'=>[[['text'=>'✅ Підтвердити','callback_data'=>'approve:'.$o->id]],[['text'=>'❌ Не пройшло перевірку','callback_data'=>'reject:'.$o->id]]]]], $p->id);
         $this->state($p->id,null); $this->tg->send($p->id,'Фото отримано 📷 Очікує ручної перевірки. Час надсилання зафіксовано.');
     }
 

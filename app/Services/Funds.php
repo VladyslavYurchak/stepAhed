@@ -366,7 +366,7 @@ class Funds
         $caption="Квитанція #{$id}\nСтатус: {$r->status}\nКористувач: {$r->profile_id}\nПропуск #{$d->occurrence_id}: ".mb_strimwidth($o->title,0,80,'…')."\nДедлайн: ".Time::parse($o->due_at,'UTC')->setTimezone($tz)->format('d.m H:i')."\nОчікувана сума: {$r->expected_amount} грн\n{$snapshot['title']}\nОтримувач: {$snapshot['recipient']}\nБанка: {$snapshot['url']}".
             "\nПеревір суму, дату й отримувача вручну. Скріншот не підтверджує надходження коштів банком.".($duplicate?"\n⚠️ Таке фото вже надсилали.":'');
         $buttons=$r->status==='pending' ? [[['text'=>'✅ Підтвердити','callback_data'=>'a:receiptapprove:'.$id]],[['text'=>'❌ Відхилити','callback_data'=>'a:receiptreject:'.$id]]] : [];
-        $this->tg->enqueue('sendPhoto',['chat_id'=>$chat,'photo'=>$r->file_id,'caption'=>$caption,'reply_markup'=>['inline_keyboard'=>$buttons]]);
+        $this->tg->enqueue('sendPhoto',['chat_id'=>$chat,'photo'=>$r->file_id,'caption'=>$caption,'reply_markup'=>['inline_keyboard'=>$buttons]], $r->profile_id);
     }
 
     public function reviewReceipt(int $admin,int $id,bool $approve,?string $reason=null): bool
