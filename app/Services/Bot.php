@@ -51,6 +51,7 @@ class Bot
         $buttons = [
             [['＋ Додати задачу', 'new']], [['☀️ Сьогодні', 'list:today'], ['🗓 Мій тиждень', 'list:week']],
             [['📈 Мій прогрес', 'progress']], [['⚙️ Налаштування', 'settings']],
+            [['☀️ Я прокинувся', 'awake']],
             [['⏸ Екстрена пауза', 'pause']],
         ];
         if (app(Funds::class)->isAdmin($uid)) {
@@ -117,9 +118,11 @@ class Bot
         if (($s['step'] ?? '') === 'timezone') {
             if (!in_array($text, timezone_identifiers_list(), true)) { $this->tg->send($p->id, 'Введи назву часового поясу, наприклад Europe/Kyiv або Europe/Warsaw.'); return; }
             DB::table('bot_profiles')->where('id', $p->id)->update(['timezone' => $text, 'onboarded' => true]);
+            if (!$p->onboarded) { app(DailyRhythm::class)->start($p->id); return; }
             $this->state($p->id, null); $this->home($p->id); return;
         }
         if (!$p->onboarded) { $this->tg->send($p->id, 'Спочатку відкрий /start і підтвердь часовий пояс.'); return; }
+        if (app(DailyRhythm::class)->message($p,$text)) return;
         if (app(Funds::class)->message($p,$m)) return;
         if (in_array($s['step'] ?? '', ['edit_single_title','edit_series_title'], true)) {
             if (mb_strlen($text) < 3 || mb_strlen($text) > 180) { $this->tg->send($p->id,'Введи нову дію та обсяг: від 3 до 180 символів.'); return; }
@@ -239,6 +242,17 @@ class Bot
             ($s['photo'] ? '📷 Фото обов’язкове. Невідповідне фото — відмова та штраф для зобов’язань.' : 'Підтвердження кнопкою.').
             ($s['mandatory'] ? "\nШтраф за найближче порушення: {$amount} грн, далі +1 грн. Пілот: без оплати.\nЗміни без штрафу — раніше ніж за 3 години до дедлайну." : "\nБез штрафу.");
         if ($s['mode'] === 'once' && $s['mandatory'] && Time::parse($s['date'].' '.$s['time'], $p->timezone)->lessThanOrEqualTo(Time::now()->addHours(3))) $text .= "\n⚠️ До дедлайну не більше 3 годин. Після підтвердження безкоштовне скасування недоступне.";
+        if ($p->sleep_at && $p->wake_at) {
+            $times = !empty($s['day_times']) ? array_values($s['day_times']) : [$s['time']];
+            foreach ($times as $time) {
+                $at = $s['mode']==='once' ? Time::parse($s['date'].' '.$time,$displayTimezone) : Time::now($displayTimezone)->setTimeFromTimeString($time);
+                $sleepProfile=clone $p; $sleepProfile->awake_until=null;
+                if (app(DailyRhythm::class)->quiet($sleepProfile,$at)) {
+                    $text .= "\n🌙 Дедлайн потрапляє на твої години сну. Нагадування надійде після пробудження; дедлайн і правила підтвердження не змінюються.";
+                    break;
+                }
+            }
+        }
         if (isset($s['editing_series_id'])) $text .= "\nЗміняться майбутні заняття, до яких більше 3 годин. Найближчі та вже виконані заняття збережуть початкові умови.";
         $this->tg->send($p->id, $text, [[['Підтвердити', 'save']], [['Почати заново', 'new'], ['Вийти', 'home']]]);
     }
@@ -264,10 +278,12 @@ class Bot
         if ($action === 'tzpick' && ($s['step'] ?? '') === 'timezone') {
             $city=$this->timezoneCities()[$value] ?? null; if (!$city) return;
             DB::table('bot_profiles')->where('id',$p->id)->update(['timezone'=>$city[1],'onboarded'=>true]);
+            if (!$p->onboarded) { app(DailyRhythm::class)->start($p->id); return; }
             $this->state($p->id,null);
             $this->tg->edit($p->id,$messageId,'✅ Час налаштовано: '.$city[0]."\nЗараз там ".Time::now($city[1])->format('H:i').".\nНові задачі створюватимуться за цим часом. Уже погоджені дедлайни збережуться.",[[['Відкрити меню','home']],[['Обрати інше місто','timezone']]]); return;
         }
         if (!$p->onboarded) { $this->tg->send($p->id, 'Спочатку підтвердь часовий пояс через /start.'); return; }
+        if (app(DailyRhythm::class)->button($p,$data)) return;
         if (app(Funds::class)->button($p->id,$data,$p->id,$messageId)) return;
         if ($action === 'home') { $this->state($p->id, null); $this->home($p->id); return; }
         if ($action === 'new') { $this->state($p->id, ['step' => 'title']); $this->tg->send($p->id, 'Що хочеш зробити? Напиши конкретну дію та обсяг, наприклад «30 віджимань». Для виходу — /cancel.'); return; }
@@ -383,10 +399,14 @@ class Bot
         if ($action === 'settings') {
             $this->state($p->id, null);
             $buttons=[[['Часовий пояс','timezone']],[['Повторювані задачі','series']],[['Екстрена пауза','pause']]];
+            $buttons[]=[['🌙 Сон і ранкові плани','rhythm']];
             if (app(Funds::class)->isAdmin($p->id)) $buttons[]=[['Благодійні збори','funds']];
             $buttons[]=[['🔐 Мої дані','privacy']];
             $buttons[]=[['Дізнайся про мене більше💜','guide']]; $buttons[]=[['Повернутися в меню','home']];
-            $this->tg->edit($p->id,$messageId,"Часовий пояс: {$p->timezone}\nНагадування: за 2 години до дедлайну.\nЕкстрена пауза: до 3 діб раз на 30 днів; далі через модерацію.\nДобровільні донати — на схвалені збори. Календар ще не підключений.",$buttons); return;
+            $rhythm = $p->sleep_at
+                ? "\n🌙 Сон: {$p->sleep_at} — {$p->wake_at}.\n☀️ Ранкові плани: ".($p->morning_mode==='off' ? 'вимкнені' : $p->morning_at).'.'
+                : "\n🌙 Час сну та ранкові плани ще не налаштовані.";
+            $this->tg->edit($p->id,$messageId,"Часовий пояс: {$p->timezone}\nНагадування: за 2 години до дедлайну.".$rhythm."\nЕкстрена пауза: до 3 діб раз на 30 днів; далі через модерацію.\nДобровільні донати — на схвалені збори. Календар ще не підключений.",$buttons); return;
         }
         if ($action === 'privacy') {
             $this->state($p->id, null);

@@ -18,7 +18,7 @@ class UserData
         $data = ['exported_at'=>now()->utc()->toIso8601String(), 'profile'=>$profile];
         // Dialogs can contain unfinished administrative forms, so export only the user's saved records.
         if ($profile) unset($profile->dialog);
-        foreach (['commitments','occurrences','bot_pauses','donations','donation_receipts'] as $table) {
+        foreach (['commitments','occurrences','bot_pauses','donations','donation_receipts','bot_deferred_notifications'] as $table) {
             $data[$table] = DB::table($table)->where('profile_id', $uid)->orderBy('id')->get()->map(function ($row) {
                 unset($row->reviewed_by);
                 return $row;
@@ -35,6 +35,7 @@ class UserData
     {
         $deleted = Cache::lock('telegram-outbox', 120)->get(fn () => DB::transaction(function () use ($uid) {
             // Delete dependent rows first, preserving shared funds and other accounts.
+            DB::table('bot_deferred_notifications')->where('profile_id', $uid)->delete();
             DB::table('donation_receipts')->where('profile_id', $uid)->delete();
             DB::table('donations')->where('profile_id', $uid)->delete();
             DB::table('occurrences')->where('profile_id', $uid)->delete();

@@ -46,9 +46,12 @@ class Telegram
         ]);
     }
 
-    public function send(int|string $chat, string $text, array $rows = [], ?string $parseMode = null, ?int $dataOwner = null): void
+    public function send(int|string $chat, string $text, array $rows = [], ?string $parseMode = null, ?int $dataOwner = null, ?int $scheduledOccurrence = null, bool $quietAware = false, ?string $morningDate = null): void
     {
         $payload = ['chat_id' => $chat, 'text' => $text];
+        if ($scheduledOccurrence !== null) $payload['_scheduled_occurrence'] = $scheduledOccurrence;
+        if ($quietAware) $payload['_quiet_aware'] = true;
+        if ($morningDate !== null) $payload['_morning_date'] = $morningDate;
         if ($parseMode !== null) $payload['parse_mode'] = $parseMode;
         if ($rows) $payload['reply_markup'] = ['inline_keyboard' => array_map(
             fn ($row) => array_map(fn ($b) => ['text' => $b[0], 'callback_data' => $b[1]], $row), $rows
@@ -86,7 +89,27 @@ class Telegram
         Cache::lock('telegram-outbox', 120)->get(function () {
             foreach (DB::table('bot_outbox')->whereNull('sent_at')->where('available_at', '<=', now())->orderBy('id')->limit(6)->get() as $item) {
                 try {
-                    $this->call($item->method, json_decode($item->payload, true));
+                    $payload = json_decode($item->payload, true);
+                    if (isset($payload['_scheduled_occurrence']) || isset($payload['_quiet_aware']) || isset($payload['_morning_date'])) {
+                        $p = DB::table('bot_profiles')->find((int)$payload['chat_id']);
+                        if (!$p) { DB::table('bot_outbox')->where('id',$item->id)->delete(); continue; }
+                        if (isset($payload['_morning_date']) && $payload['_morning_date'] !== now()->setTimezone($p->timezone)->toDateString()) {
+                            DB::table('bot_outbox')->where('id',$item->id)->delete(); continue;
+                        }
+                        if ((isset($payload['_scheduled_occurrence']) || isset($payload['_quiet_aware'])) && app(DailyRhythm::class)->quiet($p)) {
+                            if (!isset($payload['_scheduled_occurrence'])) {
+                                DB::table('bot_outbox')->where('id',$item->id)->update(['available_at'=>now()->addMinute()]);
+                                continue;
+                            }
+                            DB::transaction(function () use ($item,$payload,$p) {
+                                app(DailyRhythm::class)->defer($p->id,(int)$payload['_scheduled_occurrence']);
+                                DB::table('bot_outbox')->where('id',$item->id)->delete();
+                            });
+                            continue;
+                        }
+                        unset($payload['_scheduled_occurrence'], $payload['_quiet_aware'], $payload['_morning_date']);
+                    }
+                    $this->call($item->method, $payload);
                     DB::table('bot_outbox')->where('id', $item->id)->update(['sent_at' => now(), 'last_error' => null]);
                 } catch (\Throwable $e) {
                     DB::table('bot_outbox')->where('id', $item->id)->update([

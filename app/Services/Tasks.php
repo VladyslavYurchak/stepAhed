@@ -63,7 +63,7 @@ class Tasks
         DB::table('occurrences')->where('id', $o->id)->update([
             'status' => 'missed', 'penalty_amount' => $amount, 'updated_at' => now(),
         ]);
-        app(Telegram::class)->send($o->profile_id,
+        app(DailyRhythm::class)->notify($o->profile_id, $o->id,
             "Не підтверджено: {$o->title}.".($amount ? "\nРозрахований штраф: {$amount} грн. Можна зробити добровільний донат на схвалений збір; доступ до бота не блокується." : "\nЦе необов’язковий план — штрафу немає."),
             $amount ? [[['Обрати збір / підтвердити донат','donate:'.$o->id]]] : []
         );
@@ -81,17 +81,18 @@ class Tasks
             foreach (DB::table('occurrences')->where('status', 'pending')->whereNull('deadline_notice_at')
                 ->where('due_at', '<=', now())->where('due_at', '>=', now()->subMinutes(30))->get() as $row) {
                 $o = $this->occurrence($row->id, $row->profile_id);
-                $tg->send($row->profile_id, "Дедлайн настав: {$o->title}.\nЯкщо виконав вчасно, підтвердь протягом 30 хвилин.", [[['Підтвердити', 'done:'.$o->id]]]);
+                app(DailyRhythm::class)->notify($row->profile_id, $o->id, "Дедлайн настав: {$o->title}.\nЯкщо виконав вчасно, підтвердь протягом 30 хвилин.", [[['Підтвердити', 'done:'.$o->id]]]);
                 DB::table('occurrences')->where('id', $row->id)->update(['deadline_notice_at' => now()]);
             }
             foreach (DB::table('occurrences')->where('status', 'pending')->whereNull('reminded_at')
                 ->where('due_at', '>', now())->where('due_at', '<=', now()->addHours(2))->get() as $row) {
                 $o = $this->occurrence($row->id, $row->profile_id);
                 $tz = DB::table('bot_profiles')->where('id', $row->profile_id)->value('timezone');
-                $tg->send($row->profile_id, "Нагадування: {$o->title}\nДедлайн: ".Time::parse($o->due_at, 'UTC')->setTimezone($tz)->format('d.m H:i'), [[['Виконано', 'done:'.$o->id], ['Відкрити', 'view:'.$o->id]]]);
+                app(DailyRhythm::class)->notify($row->profile_id, $o->id, "Нагадування: {$o->title}\nДедлайн: ".Time::parse($o->due_at, 'UTC')->setTimezone($tz)->format('d.m H:i'), [[['Виконано', 'done:'.$o->id], ['Відкрити', 'view:'.$o->id]]]);
                 DB::table('occurrences')->where('id', $row->id)->update(['reminded_at' => now()]);
             }
             foreach (DB::table('bot_profiles')->pluck('id') as $uid) app(Accountability::class)->settleDays($uid);
+            app(DailyRhythm::class)->tick();
         });
     }
 
