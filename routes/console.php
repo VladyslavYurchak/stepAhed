@@ -26,3 +26,10 @@ Artisan::command('bot:backup-verify {snapshot}', function () {
 
 Schedule::call(fn () => Artisan::call('bot:backup'))->name('bot-backup')
     ->dailyAt('03:00')->timezone('Europe/Kyiv')->withoutOverlapping();
+
+Artisan::command('bot:backup-prune', function () {
+    $this->info('Expired snapshots removed: '.app(Backups::class)->prune());
+})->purpose('Delete private snapshots older than fourteen days');
+
+Schedule::call(fn () => Artisan::call('bot:backup-prune'))->name('bot-backup-prune')
+    ->hourly()->withoutOverlapping();

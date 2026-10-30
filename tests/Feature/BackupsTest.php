@@ -55,6 +55,24 @@ class BackupsTest extends TestCase
         $this->assertSame([], glob($backups->root().'/.restore-*'));
     }
 
+    public function test_expired_backups_are_removed_without_touching_recent_or_unknown_files(): void
+    {
+        $backups = app(Backups::class);
+        $current = $backups->create();
+        $expired = now()->utc()->subDays(15)->format('Ymd-His').'-01234567';
+        mkdir($backups->root().'/'.$expired, 0700);
+        foreach (['database.sqlite','.env','manifest.json'] as $file) copy($backups->root().'/'.$current.'/'.$file, $backups->root().'/'.$expired.'/'.$file);
+        $unknown = now()->utc()->subDays(15)->format('Ymd-His').'-abcdef01';
+        mkdir($backups->root().'/'.$unknown, 0700);
+        file_put_contents($backups->root().'/'.$unknown.'/keep.txt', 'unrelated');
+        $this->assertSame(1, $backups->prune());
+        $this->assertDirectoryDoesNotExist($backups->root().'/'.$expired);
+        $this->assertDirectoryExists($backups->root().'/'.$current);
+        $this->assertFileExists($backups->root().'/'.$unknown.'/keep.txt');
+        $this->assertSame('ok', $backups->verify($current)['integrity']);
+        $this->assertSame(0, $backups->prune());
+    }
+
     public function test_corrupt_configuration_fails_verification_and_keeps_live_data(): void
     {
         $backups = app(Backups::class);

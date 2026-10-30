@@ -75,6 +75,26 @@ class Backups
         }
     }
 
+    public function prune(): int
+    {
+        $root = $this->root();
+        if (!is_dir($root)) return 0;
+        if (is_link($root)) throw new RuntimeException('Backup root must not be a symlink.');
+        $removed = 0;
+        $cutoff = now()->utc()->subDays(14)->format('Ymd-His');
+        foreach (scandir($root) as $id) {
+            if (!preg_match('/^(\d{8}-\d{6})-[a-f0-9]{8}$/D', $id, $match) || strcmp($match[1], $cutoff) > 0) continue;
+            $dir = $root.'/'.$id;
+            if (is_link($dir) || !is_dir($dir)) continue;
+            $entries = array_diff(scandir($dir), ['.', '..']);
+            if (array_diff($entries, ['database.sqlite', '.env', 'manifest.json'])) continue;
+            foreach ($entries as $file) if (is_link($dir.'/'.$file) || !is_file($dir.'/'.$file)) continue 2;
+            $this->removeDirectory($dir);
+            $removed++;
+        }
+        return $removed;
+    }
+
     private function verifyDirectory(string $dir): array
     {
         $manifest = json_decode(file_get_contents($dir.'/manifest.json'), true, flags: JSON_THROW_ON_ERROR);

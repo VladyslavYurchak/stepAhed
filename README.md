@@ -28,7 +28,7 @@ Personal data controls: Settings → «🔐 Мої дані». Owner-only JSON e
 
 ## Backups
 
-Daily at 03:00 Europe/Kyiv, the existing scheduler creates a private SQLite snapshot and configuration backup. Manual: `php artisan bot:backup`. Isolated restore verification: `php artisan bot:backup-verify SNAPSHOT_ID`. See [docs/BACKUPS.md](docs/BACKUPS.md) for recovery steps and same-server limitations. Backups are retained without automatic deletion until a retention policy is agreed.
+Daily at 03:00 Europe/Kyiv, the existing scheduler creates a private SQLite snapshot and configuration backup. Manual: `php artisan bot:backup`. Isolated restore verification: `php artisan bot:backup-verify SNAPSHOT_ID`. See [docs/BACKUPS.md](docs/BACKUPS.md) for recovery steps and same-server limitations. Snapshots older than fourteen days are automatically deleted hourly.
 
 ## Tests
 
