@@ -52,6 +52,7 @@ class CalendarsTest extends TestCase
         $response->assertSee('DTSTART:20261030T163000Z',false);
         $response->assertSee('DTEND:20261030T163100Z',false);
         $response->assertSee('Написати лист',false);
+        $response->assertDontSee('CLASS:PRIVATE',false);
         $response->assertDontSee('Чужа секретна задача',false);
         $this->assertStringNotContainsString($token,DB::table('bot_calendar_subscriptions')->where('profile_id',11)->value('token_encrypted'));
         $export=app(UserData::class)->export(11);

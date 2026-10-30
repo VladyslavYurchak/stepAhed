@@ -18,7 +18,7 @@ class Calendars
                 'created_at'=>now(),'updated_at'=>now(),
             ]);
         } else $token=Crypt::decryptString($record->token_encrypted);
-        return rtrim(config('app.url'),'/').'/calendar/feed/'.$token.'.ics';
+        return rtrim(config('app.url'),'/').'/calendar/feed/'.$token.'.ics?v=2';
     }
 
     public function revoke(int $uid): void
@@ -105,7 +105,8 @@ class Calendars
                 'DTSTART:'.$due->format('Ymd\THis\Z'),'DTEND:'.$due->addMinute()->format('Ymd\THis\Z'),
                 'SUMMARY:'.$this->escape($summary),'DESCRIPTION:'.$this->escape($description),
                 'STATUS:'.($cancelled ? 'CANCELLED' : (in_array($o->status,['paused','pause_review'],true) ? 'TENTATIVE' : 'CONFIRMED')),
-                'TRANSP:TRANSPARENT','CLASS:PRIVATE','URL:https://t.me/krokvpered_bot','END:VEVENT');
+                // Access is controlled by the bearer URL. PRIVATE can hide transparent events in subscribed calendars.
+                'TRANSP:TRANSPARENT','URL:https://t.me/krokvpered_bot','END:VEVENT');
         }
         $lines[]='END:VCALENDAR';
         return implode("\r\n",array_map(fn ($line) => $this->fold($line),$lines))."\r\n";
