@@ -34,6 +34,12 @@ class Bot
             $this->tg->ensureNavigation($uid);
             if ($cb) {
                 $this->tg->enqueue('answerCallbackQuery', ['callback_query_id' => $cb['id']]);
+                if (($cb['data'] ?? '')==='awake' && isset($m['reply_markup']['inline_keyboard'])) {
+                    $rows=array_values(array_filter(array_map(fn ($row) => array_values(array_filter($row,
+                        fn ($button) => ($button['callback_data'] ?? '')!=='awake')),$m['reply_markup']['inline_keyboard'])));
+                    $this->tg->enqueue('editMessageReplyMarkup',['chat_id'=>$uid,'message_id'=>(int)$m['message_id'],
+                        'reply_markup'=>['inline_keyboard'=>$rows]],$uid);
+                }
                 $this->button($p, (string) ($cb['data'] ?? ''), (int) $m['message_id']);
             } else {
                 $this->message($p, $m);
@@ -60,6 +66,9 @@ class Bot
             if (config('calendar_lab.enabled')) $buttons[] = [['🧪 Тест Google Calendar', 'lab']];
         }
         $p = DB::table('bot_profiles')->where('id', $uid)->first();
+        if ($p->awake_last_date===Time::now($p->timezone)->toDateString()) {
+            $buttons=array_values(array_filter($buttons,fn ($row) => ($row[0][1] ?? '')!=='awake'));
+        }
         $start = Time::now($p->timezone)->startOfDay();
         $today = DB::table('occurrences')->join('commitments', 'commitments.id', '=', 'occurrences.commitment_id')
             ->where('occurrences.profile_id', $uid)

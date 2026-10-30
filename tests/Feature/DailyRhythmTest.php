@@ -28,6 +28,33 @@ class DailyRhythmTest extends TestCase
 
     private function p(): object { return DB::table('bot_profiles')->find(11); }
 
+    public function test_manual_wake_hides_today_and_returns_at_local_midnight(): void
+    {
+        $menu=function () {
+            return json_decode(DB::table('bot_outbox')->where('method','sendMessage')->orderByDesc('id')->first()->payload,true);
+        };
+        $this->button('home',900);
+        $this->assertStringContainsString('awake',json_encode($menu()['reply_markup']));
+        $this->button('awake',901);
+        $this->button('home',902);
+        $this->assertStringNotContainsString('awake',json_encode($menu()['reply_markup']));
+        $this->travelTo(Time::parse('2026-10-30 22:01:00','UTC'));
+        $this->button('home',903);
+        $this->assertStringContainsString('awake',json_encode($menu()['reply_markup']));
+    }
+
+    public function test_manual_wake_removes_only_its_button_from_clicked_message(): void
+    {
+        app(Bot::class)->update(['update_id'=>910,'callback_query'=>['id'=>'910','from'=>['id'=>11],
+            'data'=>'awake','message'=>['message_id'=>20,'chat'=>['id'=>11,'type'=>'private'],
+                'reply_markup'=>['inline_keyboard'=>[[['text'=>'☀️ Я прокинувся','callback_data'=>'awake']],[['text'=>'Меню','callback_data'=>'home']]]]]]]);
+        $row=DB::table('bot_outbox')->where('method','editMessageReplyMarkup')->first();
+        $this->assertNotNull($row);
+        $payload=json_decode($row->payload,true);
+        $this->assertSame(20,$payload['message_id']);
+        $this->assertSame([[['text'=>'Меню','callback_data'=>'home']]],$payload['reply_markup']['inline_keyboard']);
+    }
+
     private function button(string $data, int $id): void
     {
         app(Bot::class)->update(['update_id'=>$id,'callback_query'=>['id'=>(string)$id,'from'=>['id'=>11],

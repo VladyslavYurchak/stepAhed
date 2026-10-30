@@ -70,6 +70,8 @@ class DailyRhythm
         if ($data==='rhythm') { $this->start($p->id); return true; }
         if ($data==='awake') {
             $local=Time::now($p->timezone);
+            if ($p->awake_last_date===$local->toDateString()) return true;
+            DB::table('bot_profiles')->where('id',$p->id)->update(['awake_last_date'=>$local->toDateString()]);
             if ($p->sleep_at) {
                 $until=$local->setTimeFromTimeString($p->sleep_at);
                 if ($until->lessThanOrEqualTo($local)) $until=$until->addDay();
