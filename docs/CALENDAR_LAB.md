@@ -36,4 +36,6 @@ OAuth створення календаря не має idempotency key. Піс�
 
 Після очищення GOOGLE_CALENDAR_LAB_ENABLED=false приховує кнопку, забороняє старі посилання OAuth та вимикає синхронізатор. Саме очищення треба виконати до вимкнення прапорця. Видаляти файли чи відкочувати інші міграції для цього не потрібно.
 
-Джерела: [Google OAuth web server](https://developers.google.com/identity/protocols/oauth2/web-server), [Calendar scopes](https://developers.google.com/workspace/calendar/api/auth), [Events insert та ідентифікатори](https://developers.google.com/workspace/calendar/api/v3/reference/events/insert).
+Запити DELETE подій та календаря надсилаються без тіла; Google відхиляє JSON-масив у такому запиті. Це перевірено окремим регресійним тестом і живим скасуванням тестової події.
+
+Джерела: [Google OAuth web server](https://developers.google.com/identity/protocols/oauth2/web-server), [Calendar scopes](https://developers.google.com/workspace/calendar/api/auth), [Events insert та ідентифікатори](https://developers.google.com/workspace/calendar/api/v3/reference/events/insert), [Events delete](https://developers.google.com/workspace/calendar/api/v3/reference/events/delete), [Calendars delete](https://developers.google.com/workspace/calendar/api/v3/reference/calendars/delete).

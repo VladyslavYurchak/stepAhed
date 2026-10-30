@@ -109,7 +109,10 @@ class CalendarLab
         $request=Http::withToken(Crypt::decryptString($c->access_token))->acceptJson()->connectTimeout(4)->timeout(12);
         if ($etag) $request=$request->withHeaders(['If-Match'=>$etag]);
         $url='https://www.googleapis.com/calendar/v3'.$path;
-        return $method==='GET' ? $request->get($url,$data) : $request->send($method,$url,['json'=>$data]);
+        if ($method==='GET') return $request->get($url,$data);
+        // Google Calendar DELETE endpoints require an empty request body.
+        if ($method==='DELETE') return $request->delete($url);
+        return $request->send($method,$url,['json'=>$data]);
     }
 
     public function fingerprint(object $task): string

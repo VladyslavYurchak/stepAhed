@@ -43,6 +43,7 @@ class CalendarLabTest extends TestCase
         Http::fake(function ($r) {
             if ($r->url()==='https://oauth2.googleapis.com/token') return Http::response(['access_token'=>'refreshed-access','expires_in'=>3600]);
             $path=parse_url($r->url(),PHP_URL_PATH);
+            if ($r->method()==='DELETE' && $r->body()!=='') return Http::response(['error'=>'DELETE must have no body'],400);
             if ($path==='/calendar/v3/calendars/isolated-test-calendar' && $r->method()==='DELETE') return Http::response('',204);
             if ($path==='/calendar/v3/calendars/isolated-test-calendar/events') {
                 if ($r->method()==='GET') return Http::response(['items'=>array_values($this->remote)]);
@@ -173,6 +174,21 @@ class CalendarLabTest extends TestCase
         $this->assertDatabaseCount('occurrences',1);
         $this->assertDatabaseHas('occurrences',['commitment_id'=>$real,'status'=>'pending']);
         Http::assertSent(fn ($r) => $r->method()==='DELETE' && str_ends_with($r->url(),'/calendars/isolated-test-calendar'));
+    }
+
+    public function test_bot_cancellation_and_calendar_cleanup_send_empty_delete_bodies(): void
+    {
+        $this->connection(); $this->fakeGoogle(); $id=$this->task();
+        $lab=app(CalendarLab::class); $lab->sync(11);
+        $event=DB::table('calendar_lab_tasks')->find($id)->google_event_id;
+        DB::table('calendar_lab_tasks')->where('id',$id)->update(['status'=>'cancelled']);
+        $lab->sync(11);
+        $this->assertSame('cancelled',$this->remote[$event]['status']);
+        Http::assertSent(fn ($r) => $r->method()==='DELETE' && str_ends_with($r->url(),'/events/'.$event) && $r->body()==='' && $r->hasHeader('If-Match'));
+        DB::table('calendar_lab_connections')->where('profile_id',11)->update(['status'=>'deleting']);
+        $lab->sync(11);
+        $this->assertDatabaseCount('calendar_lab_connections',0);
+        Http::assertSent(fn ($r) => $r->method()==='DELETE' && str_ends_with($r->url(),'/calendars/isolated-test-calendar') && $r->body()==='');
     }
 
     public function test_refresh_token_and_owner_checks_are_enforced(): void
