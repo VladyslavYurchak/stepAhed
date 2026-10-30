@@ -22,6 +22,10 @@ Every minute: `/opt/alt/php83/usr/bin/php /home/u253935843/stepahead-app/artisan
 
 `bot:tick` generates recurring occurrences, sends reminders, handles expired confirmation windows and drains the retryable outbox. Webhook responses also drain up to six outgoing messages. A large backlog may need extra `bot:tick` invocations.
 
+## Backups
+
+Daily at 03:00 Europe/Kyiv, the existing scheduler creates a private SQLite snapshot and configuration backup. Manual: `php artisan bot:backup`. Isolated restore verification: `php artisan bot:backup-verify SNAPSHOT_ID`. See [docs/BACKUPS.md](docs/BACKUPS.md) for recovery steps and same-server limitations. Backups are retained without automatic deletion until a retention policy is agreed.
+
 ## Tests
 
 `php vendor/bin/phpunit`
