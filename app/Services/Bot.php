@@ -50,14 +50,45 @@ class Bot
     {
         $buttons = [
             [['＋ Додати задачу', 'new']], [['☀️ Сьогодні', 'list:today'], ['🗓 Мій тиждень', 'list:week']],
-            [['🔁 Мій розклад', 'series'], ['📈 Мій прогрес', 'progress']], [['⚙️ Налаштування', 'settings']],
+            [['📈 Мій прогрес', 'progress']], [['⚙️ Налаштування', 'settings']],
             [['⏸ Екстрена пауза', 'pause']],
         ];
         if (app(Funds::class)->isAdmin($uid)) {
             $buttons[] = [['💛 Благодійні збори', 'funds']];
             $buttons[] = [['🛠 Адміністрування', 'a:menu']];
         }
-        $this->tg->send($uid, "<b>Крок вперед 🌱</b>\nВеликі зміни починаються з маленьких дій.\n\nЩо сьогодні зробимо для тебе майбутнього? 💜", $buttons, 'HTML');
+        $p = DB::table('bot_profiles')->where('id', $uid)->first();
+        $start = Time::now($p->timezone)->startOfDay();
+        $today = DB::table('occurrences')->join('commitments', 'commitments.id', '=', 'occurrences.commitment_id')
+            ->where('occurrences.profile_id', $uid)
+            ->whereBetween('occurrences.due_at', [$start->utc(), $start->addDay()->utc()->subSecond()]);
+        $remaining = (clone $today)->whereIn('occurrences.status', ['pending','rejected','review','paused','pause_review']);
+        $total = (clone $remaining)->count();
+        $text = '<b>Сьогодні зробимо ще один &quot;Крок вперед 🌱&quot;</b>';
+        if ($total) {
+            $text .= "\n\nТвій календарик на сьогодні:";
+            $shown = 0;
+            foreach ($remaining->orderBy('occurrences.due_at')->orderBy('occurrences.id')->limit(10)
+                ->select('occurrences.due_at','occurrences.status','commitments.title')->get() as $task) {
+                $title = htmlspecialchars(mb_strimwidth($task->title, 0, 120, '…'), ENT_QUOTES|ENT_SUBSTITUTE, 'UTF-8');
+                $status = match ($task->status) {
+                    'review'=>' · 📷 На перевірці', 'paused'=>' · ⏸ Пауза',
+                    'pause_review'=>' · ⏳ Запит на паузу', 'rejected'=>' · Фото відхилено', default=>'',
+                };
+                $line = "\n".Time::parse($task->due_at, 'UTC')->setTimezone($p->timezone)->format('H:i').' — '.$title.$status;
+                if (mb_strlen($text.$line) > 3200) break;
+                $text .= $line;
+                $shown++;
+            }
+            if ($shown < $total) $text .= "\nЩе ".($total-$shown).' задач — у «Сьогодні».';
+        } else {
+            $text .= (clone $today)->where('occurrences.status','done')->exists()
+                ? "\n\nНа сьогодні більше немає невиконаних задач 💜"
+                : "\n\nУ тебе на сьогодні ще нічого не заплановано, саме час запланувати сьогоднішній день.";
+        }
+        $text .= "\n\n<b>Пам’ятай:</b> Великі зміни починаються з маленьких дій.";
+        if (!$total) $text .= "\n\nЩо сьогодні зробимо для тебе майбутнього? 💜";
+        $this->tg->send($uid, $text, $buttons, 'HTML');
     }
 
     private function message(object $p, array $m): void
@@ -351,7 +382,7 @@ class Bot
         }
         if ($action === 'settings') {
             $this->state($p->id, null);
-            $buttons=[[['Часовий пояс','timezone']],[['Екстрена пауза','pause']]];
+            $buttons=[[['Часовий пояс','timezone']],[['Повторювані задачі','series']],[['Екстрена пауза','pause']]];
             if (app(Funds::class)->isAdmin($p->id)) $buttons[]=[['Благодійні збори','funds']];
             $buttons[]=[['🔐 Мої дані','privacy']];
             $buttons[]=[['Дізнайся про мене більше💜','guide']]; $buttons[]=[['Повернутися в меню','home']];

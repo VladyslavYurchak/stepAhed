@@ -85,6 +85,28 @@ class BotTest extends TestCase
         $this->assertCount(1, $s['day_times']);
     }
 
+    public function test_home_shows_only_own_unfinished_tasks_for_local_today_in_time_order(): void
+    {
+        $this->makeOccurrence(['due_at'=>'2026-10-29 21:30:00']);
+        $this->makeOccurrence(['due_at'=>'2026-10-29 20:00:00']);
+        $this->makeOccurrence(['due_at'=>'2026-10-29 19:00:00','status'=>'done']);
+        $this->makeOccurrence(['due_at'=>'2026-10-29 22:00:00']); // Next local day.
+        $this->text('/menu', 901);
+        $payload=json_decode(DB::table('bot_outbox')->where('method','sendMessage')->orderByDesc('id')->value('payload'),true);
+        $this->assertStringContainsString('Твій календарик на сьогодні:', $payload['text']);
+        $this->assertStringContainsString('22:00 —', $payload['text']);
+        $this->assertStringContainsString('23:30 —', $payload['text']);
+        $this->assertStringNotContainsString('21:00 —', $payload['text']);
+        $this->assertStringNotContainsString('00:00 —', $payload['text']);
+        $this->assertLessThan(strpos($payload['text'],'23:30'), strpos($payload['text'],'22:00'));
+        $this->assertStringNotContainsString('Мій розклад',json_encode($payload,JSON_UNESCAPED_UNICODE));
+        DB::table('occurrences')->update(['status'=>'done']);
+        $this->text('/menu', 902);
+        $payload=json_decode(DB::table('bot_outbox')->where('method','sendMessage')->orderByDesc('id')->value('payload'),true);
+        $this->assertStringContainsString('більше немає невиконаних', $payload['text']);
+        $this->assertStringContainsString('Що сьогодні зробимо', $payload['text']);
+    }
+
     public function test_three_hour_boundary_is_strict(): void
     {
         $o=$this->makeOccurrence(); $tasks=app(Tasks::class);
