@@ -24,6 +24,8 @@ Every minute: `/opt/alt/php83/usr/bin/php /home/u253935843/stepahead-app/artisan
 
 ## Personal data
 
+Calendar subscriptions: Settings → «🗓 Мої календарі». Google Calendar and iPhone can read a personal ICS feed; updates are pull-based, not immediate. Changes and completion remain in the bot. See [docs/CALENDARS.md](docs/CALENDARS.md).
+
 Personal data controls: Settings → «🔐 Мої дані». Owner-only JSON export and confirmed deletion of live account records are implemented; Telegram messages and historical backups are not automatically deleted. See [docs/USER_DATA.md](docs/USER_DATA.md).
 
 ## Backups

@@ -112,7 +112,7 @@ class Bot
         }
         if ($text === '/cancel') { $this->state($p->id, null); $this->home($p->id); return; }
         if ($text === '/help') {
-            $this->tg->send($p->id, "Додай задачу через меню. Для виходу з діалогу — /cancel.\nВиконати треба до дедлайну, підтвердити — протягом наступних 30 хвилин.\nСкасувати, перенести або зменшити обсяг без штрафу можна раніше ніж за 3 години.\nФото перевіряє адміністратор. Спірне рішення можна оскаржити.\nГолосові, календар та донати ще не підключені."); return;
+            $this->tg->send($p->id, "Додай задачу через меню. Для виходу з діалогу — /cancel.\nВиконати треба до дедлайну, підтвердити — протягом наступних 30 хвилин.\nСкасувати, перенести або зменшити обсяг без штрафу можна раніше ніж за 3 години.\nФото перевіряє адміністратор. Спірне рішення можна оскаржити.\nГолосові додамо пізніше. Підписка на календар — у налаштуваннях."); return;
         }
         $s = json_decode($p->dialog ?? 'null', true);
         if (($s['step'] ?? '') === 'timezone') {
@@ -284,6 +284,7 @@ class Bot
         }
         if (!$p->onboarded) { $this->tg->send($p->id, 'Спочатку підтвердь часовий пояс через /start.'); return; }
         if (app(DailyRhythm::class)->button($p,$data)) return;
+        if (app(Calendars::class)->button($p,$data,$messageId)) return;
         if (app(Funds::class)->button($p->id,$data,$p->id,$messageId)) return;
         if ($action === 'home') { $this->state($p->id, null); $this->home($p->id); return; }
         if ($action === 'new') { $this->state($p->id, ['step' => 'title']); $this->tg->send($p->id, 'Що хочеш зробити? Напиши конкретну дію та обсяг, наприклад «30 віджимань». Для виходу — /cancel.'); return; }
@@ -400,13 +401,14 @@ class Bot
             $this->state($p->id, null);
             $buttons=[[['Часовий пояс','timezone']],[['Повторювані задачі','series']],[['Екстрена пауза','pause']]];
             $buttons[]=[['🌙 Сон і ранкові плани','rhythm']];
+            $buttons[]=[['🗓 Мої календарі','calendars']];
             if (app(Funds::class)->isAdmin($p->id)) $buttons[]=[['Благодійні збори','funds']];
             $buttons[]=[['🔐 Мої дані','privacy']];
             $buttons[]=[['Дізнайся про мене більше💜','guide']]; $buttons[]=[['Повернутися в меню','home']];
             $rhythm = $p->sleep_at
                 ? "\n🌙 Сон: {$p->sleep_at} — {$p->wake_at}.\n☀️ Ранкові плани: ".($p->morning_mode==='off' ? 'вимкнені' : $p->morning_at).'.'
                 : "\n🌙 Час сну та ранкові плани ще не налаштовані.";
-            $this->tg->edit($p->id,$messageId,"Часовий пояс: {$p->timezone}\nНагадування: за 2 години до дедлайну.".$rhythm."\nЕкстрена пауза: до 3 діб раз на 30 днів; далі через модерацію.\nДобровільні донати — на схвалені збори. Календар ще не підключений.",$buttons); return;
+            $this->tg->edit($p->id,$messageId,"Часовий пояс: {$p->timezone}\nНагадування: за 2 години до дедлайну.".$rhythm."\nЕкстрена пауза: до 3 діб раз на 30 днів; далі через модерацію.\nДобровільні донати — на схвалені збори. Підписка на календар — у «Мої календарі».",$buttons); return;
         }
         if ($action === 'privacy') {
             $this->state($p->id, null);
@@ -464,7 +466,7 @@ class Bot
         }
         if ($action === 'cancel' && $o->status === 'pending') {
             if (!$this->tasks->changeAllowed($o)) { $this->tg->send($p->id,'Вікно скасування без штрафу закрите. Зобов’язання залишається чинним.'); return; }
-            if (!$o->mandatory) { DB::table('occurrences')->where('id',$o->id)->update(['status'=>'cancelled']); $this->tg->send($p->id,'Необов’язковий план скасовано без штрафу.'); return; }
+            if (!$o->mandatory) { DB::table('occurrences')->where('id',$o->id)->update(['status'=>'cancelled','updated_at'=>now()]); $this->tg->send($p->id,'Необов’язковий план скасовано без штрафу.'); return; }
             DB::table('occurrences')->where('id',$o->id)->update(['cancel_started_at'=>now()]);
             $this->state($p->id,['step'=>'cancel','id'=>$o->id,'question'=>0,'started_at'=>now()->toIso8601String()]);
             $this->cancelQuestion($p->id,$o->id,0); return;
@@ -587,7 +589,7 @@ class Bot
         DB::table('commitments')->where('id',$id)->update(['active'=>false]);
         foreach (DB::table('occurrences')->where('commitment_id',$id)->whereIn('status',['pending','paused','pause_review'])->where('due_at','>',now())->get() as $row) {
             $o=$this->tasks->occurrence($row->id,$p->id);
-            if ($this->tasks->changeAllowed($o)) DB::table('occurrences')->where('id',$row->id)->update(['status'=>'cancelled']);
+            if ($this->tasks->changeAllowed($o)) DB::table('occurrences')->where('id',$row->id)->update(['status'=>'cancelled','updated_at'=>now()]);
         }
         $this->tg->send($p->id,'Нові повторення вимкнено. Найближчі зобов’язання, до яких не більше 3 годин, залишаються чинними.');
     }
@@ -633,7 +635,7 @@ class Bot
         $row=DB::table('occurrences')->where('id',(int)$id)->lockForUpdate()->first(); if (!$row) return;
         $o=$this->tasks->occurrence($row->id,$row->profile_id);
         if ($action==='pardon' && $o->status==='missed') {
-            DB::table('occurrences')->where('id',$o->id)->update(['status'=>'excused','penalty_amount'=>0,'reviewed_at'=>now()]);
+            DB::table('occurrences')->where('id',$o->id)->update(['status'=>'excused','penalty_amount'=>0,'reviewed_at'=>now(),'updated_at'=>now()]);
             $resetThrough=$this->tg->setting('penalty_reset_through_'.$o->profile_id);
             if ($o->penalty_amount && (!$resetThrough || $o->due_at>$resetThrough)) DB::table('bot_profiles')->where('id',$o->profile_id)->where('violations','>',0)->decrement('violations');
             $this->tg->send($o->profile_id,"Оскарження прийняте. Штраф за «{$o->title}» скасовано."); $this->tg->send($chat,"Штраф #{$o->id} скасовано."); return;
