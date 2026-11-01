@@ -47,11 +47,16 @@ class Tasks
             && ($at ?? Time::now())->lessThanOrEqualTo(Time::parse($o->due_at, 'UTC')->addMinutes(30));
     }
 
+    public function nextPenalty(object $profile): int
+    {
+        return min((int)config('bot.max_penalty',100),(int)config('bot.base_penalty')+(int)$profile->violations);
+    }
+
     public function penalty(object $o): int
     {
         $profile = DB::table('bot_profiles')->where('id', $o->profile_id)->lockForUpdate()->first();
         if (!$o->mandatory) return 0;
-        $amount = config('bot.base_penalty') + $profile->violations;
+        $amount = $this->nextPenalty($profile);
         DB::table('bot_profiles')->where('id', $profile->id)->increment('violations');
         return $amount;
     }

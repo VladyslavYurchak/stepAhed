@@ -189,6 +189,26 @@ class BotTest extends TestCase
         $this->assertDatabaseHas('bot_profiles',['id'=>11,'violations'=>0]);
     }
 
+    public function test_penalty_stops_at_one_hundred_without_capping_violation_counter(): void
+    {
+        $o=$this->makeOccurrence();
+        DB::table('bot_profiles')->where('id',11)->update(['violations'=>79]);
+        $this->assertSame(99,app(Tasks::class)->penalty($o));
+        $this->assertSame(100,app(Tasks::class)->penalty($o));
+        $this->assertSame(100,app(Tasks::class)->penalty($o));
+        $this->assertDatabaseHas('bot_profiles',['id'=>11,'violations'=>82]);
+    }
+
+    public function test_progress_caps_next_penalty_and_keeps_historical_amounts(): void
+    {
+        $o=$this->makeOccurrence(['status'=>'missed','penalty_amount'=>180]);
+        DB::table('bot_profiles')->where('id',11)->update(['violations'=>200]);
+        $this->button('progress',971);
+        $payload=json_decode(DB::table('bot_outbox')->where('method','sendMessage')->orderByDesc('id')->value('payload'),true);
+        $this->assertStringContainsString('Наступний розрахований штраф: 100 грн.',$payload['text']);
+        $this->assertDatabaseHas('occurrences',['id'=>$o->id,'penalty_amount'=>180]);
+    }
+
     public function test_cancellation_requires_three_questions_and_preserves_start_time(): void
     {
         $o=$this->makeOccurrence();
