@@ -28,19 +28,19 @@ class DailyRhythmTest extends TestCase
 
     private function p(): object { return DB::table('bot_profiles')->find(11); }
 
-    public function test_manual_wake_hides_today_and_returns_at_local_midnight(): void
+    public function test_manual_wake_button_is_absent_from_menu_on_every_day(): void
     {
         $menu=function () {
             return json_decode(DB::table('bot_outbox')->where('method','sendMessage')->orderByDesc('id')->first()->payload,true);
         };
         $this->button('home',900);
-        $this->assertStringContainsString('awake',json_encode($menu()['reply_markup']));
+        $this->assertStringNotContainsString('awake',json_encode($menu()['reply_markup']));
         $this->button('awake',901);
         $this->button('home',902);
         $this->assertStringNotContainsString('awake',json_encode($menu()['reply_markup']));
         $this->travelTo(Time::parse('2026-10-30 22:01:00','UTC'));
         $this->button('home',903);
-        $this->assertStringContainsString('awake',json_encode($menu()['reply_markup']));
+        $this->assertStringNotContainsString('awake',json_encode($menu()['reply_markup']));
     }
 
     public function test_manual_wake_removes_only_its_button_from_clicked_message(): void

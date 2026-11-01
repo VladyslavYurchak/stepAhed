@@ -58,7 +58,6 @@ class Bot
             [['＋ Додати задачу', 'new'], ['✅ Виконати задачу', 'list:today']],
             [['🗓 Мій тиждень', 'list:week']],
             [['📈 Мій прогрес', 'progress']], [['⚙️ Налаштування', 'settings']],
-            [['☀️ Я прокинувся', 'awake']],
             [['⏸ Екстрена пауза', 'pause']],
         ];
         if (app(Funds::class)->isAdmin($uid)) {
@@ -67,9 +66,6 @@ class Bot
             if (config('calendar_lab.enabled') && !config('calendar_lab.main_enabled')) $buttons[] = [['🧪 Тест Google Calendar', 'lab']];
         }
         $p = DB::table('bot_profiles')->where('id', $uid)->first();
-        if ($p->awake_last_date===Time::now($p->timezone)->toDateString()) {
-            $buttons=array_values(array_filter($buttons,fn ($row) => ($row[0][1] ?? '')!=='awake'));
-        }
         $start = Time::now($p->timezone)->startOfDay();
         $today = DB::table('occurrences')->join('commitments', 'commitments.id', '=', 'occurrences.commitment_id')
             ->where('occurrences.profile_id', $uid)
