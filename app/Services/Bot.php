@@ -522,7 +522,7 @@ class Bot
         $page = min($pages - 1, max(0, (int) $requestedPage));
         $rows = $query->orderBy('due_at')->orderBy('occurrences.id')->offset($page * $size)->limit($size)
             ->select('occurrences.*', 'commitments.title', 'commitments.mandatory', 'commitments.photo_required')->get();
-        $text = ($range === 'today' ? '✅ Виконати задачу · сьогодні' : 'Невиконані задачі на 7 днів 👣')."\n".$localStart->format('d.m').($range === 'week' ? ' — '.$end->format('d.m') : '');
+        $text = ($range === 'today' ? '✅ Виконати задачу · сьогодні' : 'Твій тиждень 🌱')."\n".$localStart->format('d.m').($range === 'week' ? ' — '.$end->format('d.m') : '');
         $buttons = []; $lastDate = null;
         $days = [1=>'Понеділок',2=>'Вівторок',3=>'Середа',4=>'Четвер',5=>'П’ятниця',6=>'Субота',7=>'Неділя'];
         $statuses = ['pending'=>'Очікує','done'=>'✅ Виконано','review'=>'📷 На перевірці','rejected'=>'Фото відхилено','missed'=>'❌ Пропущено','cancelled'=>'Скасовано','excused'=>'Штраф скасовано','paused'=>'⏸ Пауза','pause_review'=>'⏳ Запит на паузу'];
@@ -537,7 +537,9 @@ class Bot
                 "\n    ".($statuses[$o->status] ?? $o->status).($o->photo_required && $o->status === 'pending' ? ' · 📷 Фото' : '');
             $buttons[] = [[$number.'. '.mb_strimwidth($o->title, 0, 34, '…'), 'detail:'.$o->id.','.$range.','.$page]];
         }
-        if (!$total) $text .= "\n\nПоки задач немає.";
+        if (!$total) $text .= $range === 'week'
+            ? "\n\nНа ці дні немає задач до виконання 💜\nЗаплануємо наступний маленький крок?"
+            : "\n\nПоки задач немає.";
         else $text .= "\n\nОбери задачу нижче, щоб підтвердити, перенести або скасувати.";
         if ($pages > 1) {
             $text .= "\nСторінка ".($page + 1)." із {$pages} · задач: {$total}";
