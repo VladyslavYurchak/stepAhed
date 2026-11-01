@@ -99,6 +99,7 @@ class DailyRhythm
             'morning_mode'=>$mode,'morning_at'=>$time,'awake_until'=>null,'dialog'=>null]);
         app(Telegram::class)->send($uid,'Домовилися 💜 Не турбуватиму тебе з '.$s['sleep'].' до '.$s['wake']."\n".
             ($time ? 'Ранкові плани надсилатиму о '.$time.'.' : 'Ранкове повідомлення вимкнене.').
+            (DB::table('bot_profiles')->where('id',$uid)->value('evening_enabled') ? "\nЗа 30 хвилин до сну надішлю короткий підсумок дня 🌙 Вимкнути його можна в налаштуваннях." : '').
             "\nНічні нагадування зберу в одне повідомлення після пробудження. Дедлайни не переносяться. Змінити час можна в налаштуваннях.",[[['Повернутися в меню','home']]]);
     }
 
@@ -128,6 +129,7 @@ class DailyRhythm
             }
             $this->digest($p);
         }
+        app(EveningSummary::class)->tick();
     }
 
     public function morning(object $p, bool $manual=false): void

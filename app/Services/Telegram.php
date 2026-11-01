@@ -90,9 +90,15 @@ class Telegram
             foreach (DB::table('bot_outbox')->whereNull('sent_at')->where('available_at', '<=', now())->orderBy('id')->limit(6)->get() as $item) {
                 try {
                     $payload = json_decode($item->payload, true);
-                    if (isset($payload['_scheduled_occurrence']) || isset($payload['_quiet_aware']) || isset($payload['_morning_date'])) {
+                    if (isset($payload['_scheduled_occurrence']) || isset($payload['_quiet_aware']) || isset($payload['_morning_date']) || isset($payload['_evening_before'])) {
                         $p = DB::table('bot_profiles')->find((int)$payload['chat_id']);
                         if (!$p) { DB::table('bot_outbox')->where('id',$item->id)->delete(); continue; }
+                        if (isset($payload['_evening_before'])) {
+                            $bedtime=app(EveningSummary::class)->bedtime($p);
+                            if (!$bedtime || $bedtime->timestamp!==(int)$payload['_evening_before']) {
+                                DB::table('bot_outbox')->where('id',$item->id)->delete(); continue;
+                            }
+                        }
                         if (isset($payload['_morning_date']) && $payload['_morning_date'] !== now()->setTimezone($p->timezone)->toDateString()) {
                             DB::table('bot_outbox')->where('id',$item->id)->delete(); continue;
                         }
@@ -107,7 +113,7 @@ class Telegram
                             });
                             continue;
                         }
-                        unset($payload['_scheduled_occurrence'], $payload['_quiet_aware'], $payload['_morning_date']);
+                        unset($payload['_scheduled_occurrence'], $payload['_quiet_aware'], $payload['_morning_date'], $payload['_evening_before']);
                     }
                     $this->call($item->method, $payload);
                     DB::table('bot_outbox')->where('id', $item->id)->update(['sent_at' => now(), 'last_error' => null]);

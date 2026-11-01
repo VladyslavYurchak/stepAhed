@@ -407,10 +407,15 @@ class Bot
             $rows = DB::table('occurrences')->where('profile_id',$p->id)->selectRaw('status, count(*) as total')->groupBy('status')->pluck('total','status');
             $this->tg->send($p->id, '<b>Твій прогрес 🌱</b>'."\n\n✅ Виконано: ".($rows['done'] ?? 0)."\n⏳ На перевірці: ".($rows['review'] ?? 0)."\n❌ Пропущено: ".($rows['missed'] ?? 0)."\n\n🎯 До скидання штрафу: {$p->success_streak}/10 успішних днів.\n💰 Наступний розрахований штраф: ".(20+$p->violations).' грн.',[],'HTML'); return;
         }
+        if ($action === 'evening' && in_array($value,['on','off'],true)) {
+            DB::table('bot_profiles')->where('id',$p->id)->update(['evening_enabled'=>$value==='on']);
+            $this->button(DB::table('bot_profiles')->find($p->id),'settings',$messageId); return;
+        }
         if ($action === 'settings') {
             $this->state($p->id, null);
             $buttons=[[['Часовий пояс','timezone']],[['Повторювані задачі','series']],[['Екстрена пауза','pause']]];
             $buttons[]=[['🌙 Сон і ранкові плани','rhythm']];
+            if ($p->sleep_at) $buttons[]=[[$p->evening_enabled ? '🌙 Вимкнути вечірній підсумок' : '🌙 Увімкнути вечірній підсумок','evening:'.($p->evening_enabled ? 'off' : 'on')]];
             $buttons[]=[['🗓 Мої календарі','calendars']];
             if (app(Funds::class)->isAdmin($p->id)) $buttons[]=[['Благодійні збори','funds']];
             $buttons[]=[['🔐 Мої дані','privacy']];
@@ -418,6 +423,7 @@ class Bot
             $rhythm = $p->sleep_at
                 ? "\n🌙 Сон: {$p->sleep_at} — {$p->wake_at}.\n☀️ Ранкові плани: ".($p->morning_mode==='off' ? 'вимкнені' : $p->morning_at).'.'
                 : "\n🌙 Час сну та ранкові плани ще не налаштовані.";
+            if ($p->sleep_at) $rhythm.="\n🌙 Вечірній підсумок: ".($p->evening_enabled ? 'за 30 хвилин до сну.' : 'вимкнений.');
             $this->tg->edit($p->id,$messageId,"Часовий пояс: {$p->timezone}\nНагадування: за 2 години до дедлайну.".$rhythm."\nЕкстрена пауза: до 3 діб раз на 30 днів; далі через модерацію.\nДобровільні донати — на схвалені збори. Підписка на календар — у «Мої календарі».",$buttons); return;
         }
         if ($action === 'privacy') {

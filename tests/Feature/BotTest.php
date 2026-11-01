@@ -368,7 +368,7 @@ class BotTest extends TestCase
         $this->button('list:week',201);
         $payload=json_decode(DB::table('bot_outbox')->where('method','editMessageText')->first()->payload,true);
         $this->assertStringContainsString('29.10 — 04.11',$payload['text']);
-        $this->assertStringContainsString('Поки задач немає.',$payload['text']);
+        $this->assertStringContainsString('На ці дні немає задач до виконання',$payload['text']);
         $this->assertSame(0,DB::table('bot_outbox')->where('method','sendMessage')->count());
     }
 
