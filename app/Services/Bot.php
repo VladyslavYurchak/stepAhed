@@ -409,7 +409,7 @@ class Bot
         if ($action === 'stopseries') { $this->stopSeries($p, (int) $value); return; }
         if ($action === 'progress') {
             $rows = DB::table('occurrences')->where('profile_id',$p->id)->selectRaw('status, count(*) as total')->groupBy('status')->pluck('total','status');
-            $this->tg->send($p->id, 'Виконано: '.($rows['done'] ?? 0)."\nНа перевірці: ".($rows['review'] ?? 0)."\nПропущено: ".($rows['missed'] ?? 0)."\nДо скидання штрафу: {$p->success_streak}/10 успішних днів. Рахуються завершені дні зі зобов’язаннями; дні пауз і без задач пропускаються.\nНаступний розрахований штраф: ".(20+$p->violations).' грн. Пілот: без оплати.'); return;
+            $this->tg->send($p->id, '<b>Твій прогрес 🌱</b>'."\n\n✅ Виконано: ".($rows['done'] ?? 0)."\n⏳ На перевірці: ".($rows['review'] ?? 0)."\n❌ Пропущено: ".($rows['missed'] ?? 0)."\n\n🎯 До скидання штрафу: {$p->success_streak}/10 успішних днів.\n💰 Наступний розрахований штраф: ".(20+$p->violations).' грн.',[],'HTML'); return;
         }
         if ($action === 'settings') {
             $this->state($p->id, null);
