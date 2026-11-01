@@ -167,7 +167,7 @@ class Funds
     {
         $query=DB::table('charity_funds')->where('status','active')->orderBy('sort_order')->orderBy('id');
         $total=(clone $query)->count(); $pages=max(1,(int)ceil($total/6)); $page=min($pages-1,max(0,(int)$pageValue));
-        $text="Благодійні збори\nСхвалені адміністратором збори. Донати добровільні; вони не купують доступ до функцій бота.";
+        $text="Благодійні збори\nСхвалені адміністратором збори. Квитанції переказів за штрафами перевіряє адміністратор. Кошти надходять безпосередньо отримувачу збору.";
         $buttons=[];
         foreach ($query->offset($page*6)->limit(6)->get() as $fund) $buttons[]=[[$fund->title,'fundview:'.$fund->id]];
         if (!$total) $text.="\nПоки немає активних зборів. Адміністратор має додати першу банку.";
@@ -307,7 +307,7 @@ class Funds
         $buttons=[]; $q=DB::table('charity_funds')->where('status','active'); $total=(clone $q)->count();
         $pages=max(1,(int)ceil($total/6)); $page=min($pages-1,max(0,(int)$page));
         foreach ($q->orderBy('sort_order')->orderBy('id')->offset($page*6)->limit(6)->get() as $fund) $buttons[]=[[$fund->title,'fundpick:'.$fund->id.','.$occId]];
-        $text='Добровільний донат за пропуск · '.$o->penalty_amount." грн\nОбери схвалений збір. Донат не відкриває платних функцій і не змінює результат задачі.";
+        $text='Підтвердження штрафу за пропуск · '.$o->penalty_amount." грн\nОбери схвалений збір, зроби переказ і надішли квитанцію. Після підтвердження всіх штрафів адміністратором можна знову додавати задачі. Пропуск залишається в історії.";
         if (!$buttons) $text.="\nАктивних зборів поки немає. Адміністратор має додати банку.";
         if ($pages>1) { $nav=[]; if($page) $nav[]=['←','donate:'.$occId.','.($page-1)]; if($page+1<$pages) $nav[]=['→','donate:'.$occId.','.($page+1)]; $buttons[]=$nav; }
         if ($donation) $buttons[]=[['Надіслати квитанцію попереднього переказу','receipt:'.$donation->id]];
@@ -382,7 +382,7 @@ class Funds
         }
         DB::table('donation_receipts')->where('id',$id)->update(['status'=>$approve?'approved':'rejected','reason'=>$approve?null:$reason,'reviewed_by'=>$admin,'reviewed_at'=>now(),'updated_at'=>now()]);
         DB::table('donations')->where('id',$d->id)->update(['status'=>$approve?'approved':'rejected','updated_at'=>now()]);
-        $this->tg->send($r->profile_id,$approve ? '✅ Адміністратор підтвердив квитанцію донату. Пропуск залишається в історії задачі.' : 'Квитанція не пройшла перевірку. Причина: '.$reason.'. Можна надіслати інший скріншот.',[[['Статус донату','donate:'.$d->occurrence_id]]]);
+        $this->tg->send($r->profile_id,$approve ? '✅ Адміністратор підтвердив квитанцію. Пропуск залишається в історії задачі.'.(app(PenaltyGate::class)->hasUnpaid($r->profile_id) ? ' Ще є непідтверджені штрафи.' : ' Тепер можна додавати нові задачі 💜') : 'Квитанція не пройшла перевірку. Причина: '.$reason.'. Можна надіслати інший скріншот.',[[['Статус донату','donate:'.$d->occurrence_id]]]);
         return true;
     }
 }
